@@ -1,5 +1,3 @@
-
-
 import json
 def load_schemes():
     """
@@ -478,3 +476,46 @@ def get_top_matches(user_profile, schemes_data, top_n=5):
     ranked = rank_schemes(scored)
     return ranked[:top_n]
 
+def search_schemes(query, schemes_data):
+    """Search schemes by keyword, scheme name, category, state, and match keywords."""
+    if not query or not query.strip():
+        return []
+    
+    query = query.lower()
+    keywords = query.split()
+    results = []
+    
+    for scheme in schemes_data:
+        search_text = " ".join([
+            scheme.get("scheme_name", ""),
+            scheme.get("category", ""),
+            " ".join(scheme.get("state", [])),
+            scheme.get("eligibility_criteria", ""),
+            scheme.get("benefit_summary", ""),
+            " ".join(scheme.get("match_keywords", []))
+        ]).lower()
+        
+        score = sum(1 for kw in keywords if kw in search_text)
+        if score > 0:
+            results.append((score, scheme))
+            
+    results.sort(key=lambda x: x[0], reverse=True)
+    return [r[1] for r in results]
+
+def format_scheme_details(scheme):
+    """Format scheme details for text display."""
+    docs = ", ".join(scheme.get("required_documents", []))
+    steps = " ".join(scheme.get("application_steps", []))
+    return {
+        "name": scheme.get("scheme_name", ""),
+        "category": str(scheme.get("category", "")).capitalize(),
+        "eligibility": scheme.get("eligibility_criteria", ""),
+        "benefits": scheme.get("benefit_summary", ""),
+        "documents": docs,
+        "application_steps": steps,
+        "source_url": scheme.get("official_apply_link", "") or scheme.get("source_url", "")
+    }
+
+def generate_speech_text(scheme_details):
+    """Helper to convert scheme details into clean speech text."""
+    return f"{scheme_details['name']}. Eligibility: {scheme_details['eligibility']}. Benefits: {scheme_details['benefits']}."
