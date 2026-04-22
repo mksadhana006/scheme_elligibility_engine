@@ -279,3 +279,4 @@ if __name__ == "__main__":
         profile = build_profile(case)
         for k, v in profile.items():
             print(f"  {k}: {v}")
+
