@@ -4,7 +4,9 @@ import streamlit.components.v1 as components
 import time
 import re
 import requests
-from logic import get_top_matches, normalize_profile
+import io
+from gtts import gTTS
+from logic import get_top_matches, normalize_profile, search_schemes, format_scheme_details, generate_speech_text
 from preprocess import build_profile
 
 def transliterate_to_tamil(text):
@@ -551,7 +553,8 @@ def render_home():
             st.rerun()
     with col_main2:
         if st.button(t("btn_browse_schemes"), use_container_width=True):
-            st.toast("Browsing all schemes (Coming soon)")
+            st.session_state.step = 'browse'
+            st.rerun()
     st.write("")
     st.markdown(f"<p style='text-align: center; color: #0d9488; font-size: 1rem; font-weight: 600; background: #ccfbf1; padding: 8px 16px; border-radius: 20px; display: inline-block; margin: 0 auto 2rem auto;'>{t('voice_enabled')}</p>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='text-align: center; color: #1e293b; margin-bottom: 2rem; font-weight: 700;'>{t('how_it_works')}</h3>", unsafe_allow_html=True)
@@ -975,13 +978,74 @@ def render_no_match():
                 st.rerun()
         with col_btn2:
             if st.button(t("btn_browse_all"), use_container_width=True):
-                st.toast("Browsing all schemes")
+                st.session_state.step = 'browse'
+                st.rerun()
+
+def generate_audio_bytes(text, user_lang):
+    try:
+        # Map user language choice to gTTS language code
+        # Hinglish gets 'hi', Tamil gets 'ta', default 'en'
+        tts_lang = 'ta' if user_lang == 'ta' else ('hi' if st.session_state.language == 'Hinglish' else 'en')
+        tts = gTTS(text=text, lang=tts_lang)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+        return fp.read()
+    except Exception as e:
+        st.error(f"Audio generation failed: {e}")
+        return None
+
+def render_browse():
+    st.markdown("<h2 class='main-header'>Browse Schemes</h2>", unsafe_allow_html=True)
+    if st.button(t("btn_back")):
+        st.session_state.step = 1
+        st.rerun()
+        
+    st.markdown("<p style='color: #475569; font-size: 1.1rem;'>Search the official database using keywords or sentences.</p>", unsafe_allow_html=True)
+    
+    search_query = st.text_input("Search Schemes", placeholder="e.g., widow pension, housing, farmer...", label_visibility="collapsed")
+    
+    if st.button("Search", type="primary"):
+        schemes_data = load_schemes_data()
+        st.session_state.browse_results = search_schemes(search_query, schemes_data)
+        
+    if "browse_results" in st.session_state:
+        results = st.session_state.browse_results
+        if not results:
+            st.warning("No schemes found. Try different keywords.")
+        else:
+            st.success(f"Found {len(results)} matching scheme(s).")
+            for scheme in results:
+                details = format_scheme_details(scheme)
+                with st.expander(f"📌 {details['name']}"):
+                    st.markdown(f"**Category:** {details['category']}")
+                    # If Tamil selected, try to show translation from logic/app
+                    eligibility_text = translate_explanation(details['eligibility'])
+                    benefits_text = translate_explanation(details['benefits'])
+                    
+                    st.markdown(f"**Eligibility:** {eligibility_text}")
+                    st.markdown(f"**Benefits:** {benefits_text}")
+                    st.markdown(f"**Application Steps:** {translate_explanation(details['application_steps'])}")
+                    st.markdown(f"**Required Documents:** {translate_explanation(details['documents'])}")
+                    st.markdown(f"[🔗 Official Source / Apply Link]({details['source_url']})")
+                    
+                    st.write("---")
+                    st.write("🎧 **Listen to scheme details**")
+                    if st.button("🔊 Play Audio", key=f"audio_{scheme['scheme_name']}"):
+                        with st.spinner("Generating audio..."):
+                            speech_text = generate_speech_text(details)
+                            final_speech_text = translate_explanation(speech_text) if st.session_state.output_language == 'ta' else speech_text
+                            audio_bytes = generate_audio_bytes(final_speech_text, st.session_state.output_language)
+                            if audio_bytes:
+                                st.audio(audio_bytes, format='audio/mp3')
 
 def main():
     setup_page()
     init_session()
     if st.session_state.step == 1:
         render_home()
+    elif st.session_state.step == 'browse':
+        render_browse()
     elif st.session_state.step == 2:
         render_input()
     elif st.session_state.step == 3:
