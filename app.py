@@ -1,4 +1,5 @@
 import json
+import math
 import streamlit as st
 import streamlit.components.v1 as components
 import time
@@ -99,6 +100,21 @@ TEXTS = {
         "how_to_apply": "How to apply",
         "docs_required": "Documents required",
         "btn_find_center": "Find Nearest Application Center",
+        "btn_back_details": "← Back to Scheme Details",
+        "find_center_title": "Find Nearest Application Center",
+        "find_center_desc": "Locate government service centers nearby where you can apply for {scheme_name}",
+        "gps_detect": "📍 Detect My Current Location",
+        "manual_select": "Or select your location manually:",
+        "select_state": "Select State",
+        "select_city": "Select City",
+        "nearest_center": "Nearest Application Center",
+        "distance_km": "{distance} km away",
+        "directions": "📍 Get Directions in Google Maps",
+        "no_centers_state": "⚠️ No application centers found in your state. Showing closest available centers from other regions.",
+        "recommended_type": "Recommended Center Type for this scheme:",
+        "loading_location": "Detecting location, please wait...",
+        "location_success": "✅ GPS Location detected successfully!",
+        "location_error": "❌ Unable to detect GPS location. Please select manually.",
         "no_match_title": "No exact schemes found",
         "no_match_desc": "We couldn't find a scheme that exactly matches all your details right now. But don't worry, there might still be options for you.",
         "suggestions_title": "Suggestions to improve matches",
@@ -181,6 +197,21 @@ TEXTS = {
         "how_to_apply": "எப்படி விண்ணப்பிப்பது",
         "docs_required": "தேவையான ஆவணங்கள்",
         "btn_find_center": "அருகிலுள்ள விண்ணப்ப மையத்தை கண்டறியவும்",
+        "btn_back_details": "← திட்ட விவரங்களுக்குத் திரும்பு",
+        "find_center_title": "அருகிலுள்ள விண்ணப்ப மையத்தைக் கண்டறியவும்",
+        "find_center_desc": "{scheme_name} திட்டத்திற்கு விண்ணப்பிக்கக்கூடிய அருகிலுள்ள அரசு சேவை மையங்களைக் கண்டறியவும்",
+        "gps_detect": "📍 எனது தற்போதைய இருப்பிடத்தைக் கண்டறி",
+        "manual_select": "அல்லது உங்கள் இருப்பிடத்தை கைமுறையாகத் தேர்ந்தெடுக்கவும்:",
+        "select_state": "மாநிலத்தைத் தேர்ந்தெடுக்கவும்",
+        "select_city": "நகரத்தைத் தேர்ந்தெடுக்கவும்",
+        "nearest_center": "மிக அருகில் உள்ள விண்ணப்ப மையம்",
+        "distance_km": "{distance} கி.மீ தொலைவில்",
+        "directions": "📍 கூகுள் மேப்ஸில் வழிசெலுத்தலைப் பெறுக",
+        "no_centers_state": "⚠️ உங்கள் மாநிலத்தில் விண்ணப்ப மையங்கள் எதுவும் இல்லை. பிற பகுதிகளிலிருந்து மிக அருகில் உள்ள மையங்களைக் காட்டுகிறது.",
+        "recommended_type": "இந்த திட்டத்திற்கு பரிந்துரைக்கப்படும் மைய வகை:",
+        "loading_location": "இருப்பிடத்தைக் கண்டறிகிறது, தயவுசெய்து காத்திருக்கவும்...",
+        "location_success": "✅ ஜிபிஎஸ் இருப்பிடம் வெற்றிகரமாகக் கண்டறியப்பட்டது!",
+        "location_error": "❌ ஜிபிஎஸ் இருப்பிடத்தைக் கண்டறிய முடியவில்லை. தயவுசெய்து கைமுறையாகத் தேர்ந்தெடுக்கவும்.",
         "no_match_title": "சரியான திட்டங்கள் எதுவும் கிடைக்கவில்லை",
         "no_match_desc": "தற்போது உங்கள் எல்லா விவரங்களுக்கும் பொருந்தக்கூடிய ஒரு திட்டத்தை எங்களால் கண்டுபிடிக்க முடியவில்லை. ஆனால் கவலைப்பட வேண்டாம், உங்களுக்கான மாற்று திட்டங்கள் இருக்கலாம்.",
         "suggestions_title": "பொருத்தங்களை மேம்படுத்துவதற்கான ஆலோசனைகள்",
@@ -827,7 +858,12 @@ def render_processing():
                 backend_profile = build_backend_profile()
                 normalized_profile = normalize_profile(backend_profile)
                 schemes_data = load_schemes_data()
-                results = get_top_matches(normalized_profile, schemes_data, top_n=5)
+                results = get_top_matches(
+                    normalized_profile,
+                    schemes_data,
+                    top_n=15,
+                    user_text=st.session_state.user_input
+                )
                 st.session_state.results = results
                 st.session_state.selected_scheme = results[0] if results else None
                 st.session_state.step = 4
@@ -903,6 +939,39 @@ def render_results():
             st.link_button(t("btn_apply"), scheme.get("official_apply_link", "#"), use_container_width=True)
         st.write("")
 
+    # --- Web Search: Newly Announced Schemes ---
+    try:
+        from search_api import fetch_new_schemes, is_available as search_available
+        if search_available():
+            web_results = fetch_new_schemes(build_backend_profile(), max_results=3)
+            if web_results:
+                st.write("---")
+                st.markdown("""
+                <div style="margin-top: 1rem; margin-bottom: 1rem;">
+                    <h3 style="color: #0f172a; font-weight: 700;">🌐 Discover More Schemes</h3>
+                    <p style="color: #64748b; font-size: 0.95rem;">Recently announced schemes that may be relevant to you:</p>
+                </div>
+                """, unsafe_allow_html=True)
+                for wr in web_results:
+                    st.markdown(f"""
+                    <div class="premium-card" style="padding: 1.25rem 1.5rem;">
+                        <h4 style="margin-top: 0; font-size: 1.05rem; color: #0f172a;">
+                            🔗 {wr.get('title', '')}
+                        </h4>
+                        <p style="color: #475569; font-size: 0.95rem; line-height: 1.5; margin-bottom: 0.75rem;">
+                            {wr.get('snippet', '')}
+                        </p>
+                        <p style="margin-bottom: 0;">
+                            <a href="{wr.get('link', '#')}" target="_blank" 
+                               style="color: #0d9488; font-weight: 600; text-decoration: none; font-size: 0.9rem;">
+                                Visit {wr.get('source', 'source')} →
+                            </a>
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+    except Exception:
+        pass  # Web search is optional — silently skip on any error
+
 def render_detail():
     scheme = st.session_state.get("selected_scheme")
     if not scheme:
@@ -946,7 +1015,8 @@ def render_detail():
         st.link_button(t("btn_apply"), scheme.get("official_apply_link", "#"), use_container_width=True)
         st.write("")
         if st.button(t("btn_find_center"), type="primary", use_container_width=True):
-            st.toast("Opening map...")
+            st.session_state.step = 7
+            st.rerun()
 
 def render_no_match():
     st.write("")
@@ -977,6 +1047,594 @@ def render_no_match():
             if st.button(t("btn_browse_all"), use_container_width=True):
                 st.toast("Browsing all schemes")
 
+# --- Geolocation & Map Database / Logic ---
+
+STATE_CITIES = {
+    "Tamil Nadu": {
+        "Chennai": (13.0827, 80.2707),
+        "Coimbatore": (11.0168, 76.9558),
+        "Madurai": (9.9252, 78.1198),
+        "Trichy": (10.7905, 78.7047),
+        "Salem": (11.6643, 78.1460)
+    },
+    "Bihar": {
+        "Patna": (25.5941, 85.1376),
+        "Gaya": (24.7955, 85.0002),
+        "Muzaffarpur": (26.1209, 85.3647),
+        "Bhagalpur": (25.2425, 87.0135)
+    },
+    "Maharashtra": {
+        "Mumbai": (19.0760, 72.8777),
+        "Pune": (18.5204, 73.8567),
+        "Nagpur": (21.1458, 79.0882),
+        "Nashik": (19.9975, 73.7898)
+    },
+    "Uttar Pradesh": {
+        "Lucknow": (26.8467, 80.9462),
+        "Kanpur": (26.4499, 80.3319),
+        "Varanasi": (25.3176, 82.9739),
+        "Agra": (27.1767, 78.0081),
+        "Prayagraj": (25.4358, 81.8463)
+    },
+    "Other": {
+        "New Delhi": (28.6139, 77.2090)
+    }
+}
+
+APPLICATION_CENTERS = [
+    # --- Tamil Nadu (e-Sevai Centers) ---
+    {
+        "name": "e-Sevai Center (TNESEV01)",
+        "type": "e-Sevai Center",
+        "address": "Fort St. George, Secretariat, Chennai, Tamil Nadu 600009",
+        "state": "Tamil Nadu",
+        "lat": 13.0827,
+        "lng": 80.2707,
+        "phone": "+91 44 2567 1876",
+        "service_specialty": "All Tamil Nadu State Welfare Schemes, Pensions, and Certificates"
+    },
+    {
+        "name": "e-Sevai Center (TNESEV02)",
+        "type": "e-Sevai Center",
+        "address": "District Collectorate Compound, Coimbatore, Tamil Nadu 641018",
+        "state": "Tamil Nadu",
+        "lat": 11.0168,
+        "lng": 76.9558,
+        "phone": "+91 422 230 0124",
+        "service_specialty": "Agricultural & Widow Pensions, Income Certificates"
+    },
+    {
+        "name": "e-Sevai Center (TNESEV03)",
+        "type": "e-Sevai Center",
+        "address": "Collectorate Compound, Madurai, Tamil Nadu 625020",
+        "state": "Tamil Nadu",
+        "lat": 9.9252,
+        "lng": 78.1198,
+        "phone": "+91 452 253 1156",
+        "service_specialty": "Social Welfare Schemes, Housing and Pension Schemes"
+    },
+    {
+        "name": "e-Sevai Center (TNESEV04)",
+        "type": "e-Sevai Center",
+        "address": "District Collector's Office, Tiruchirappalli, Tamil Nadu 620001",
+        "state": "Tamil Nadu",
+        "lat": 10.7905,
+        "lng": 78.7047,
+        "phone": "+91 431 241 5122",
+        "service_specialty": "Unorganized Sector Schemes, Old Age Pension"
+    },
+    {
+        "name": "e-Sevai Center (TNESEV05)",
+        "type": "e-Sevai Center",
+        "address": "District Collectorate, Salem, Tamil Nadu 636001",
+        "state": "Tamil Nadu",
+        "lat": 11.6643,
+        "lng": 78.1460,
+        "phone": "+91 427 241 1234",
+        "service_specialty": "Widow Welfare, Family Benefit Schemes"
+    },
+
+    # --- Bihar (Vasudha Kendra - CSC) ---
+    {
+        "name": "Vasudha Kendra (CSC-BH01)",
+        "type": "Common Service Centre (CSC)",
+        "address": "Collectorate Road, Patna, Bihar 800001",
+        "state": "Bihar",
+        "lat": 25.5941,
+        "lng": 85.1376,
+        "phone": "+91 612 221 5432",
+        "service_specialty": "Bihar State Social Security Pensions, PM-SYM, Aadhaar Services"
+    },
+    {
+        "name": "Vasudha Kendra (CSC-BH02)",
+        "type": "Common Service Centre (CSC)",
+        "address": "District Collectorate, Gaya, Bihar 823001",
+        "state": "Bihar",
+        "lat": 24.7955,
+        "lng": 85.0002,
+        "phone": "+91 631 222 0045",
+        "service_specialty": "PM-KISAN registration, Agricultural & Widow Pension"
+    },
+    {
+        "name": "Vasudha Kendra (CSC-BH03)",
+        "type": "Common Service Centre (CSC)",
+        "address": "Collectorate Compound, Muzaffarpur, Bihar 842001",
+        "state": "Bihar",
+        "lat": 26.1209,
+        "lng": 85.3647,
+        "phone": "+91 621 224 3321",
+        "service_specialty": "Social Welfare Department Pension Schemes, PMUY LPG Application"
+    },
+    {
+        "name": "Vasudha Kendra (CSC-BH04)",
+        "type": "Common Service Centre (CSC)",
+        "address": "District Office, Bhagalpur, Bihar 812001",
+        "state": "Bihar",
+        "lat": 25.2425,
+        "lng": 87.0135,
+        "phone": "+91 641 240 1122",
+        "service_specialty": "Jan Dhan Bank Account linkage, PM-SYM unorganized pension"
+    },
+
+    # --- Maharashtra (Maha e-Seva Kendra) ---
+    {
+        "name": "Maha e-Seva Kendra (MH-01)",
+        "type": "Maha e-Seva Kendra",
+        "address": "Old Secretariat Bldg, Fort, Mumbai, Maharashtra 400032",
+        "state": "Maharashtra",
+        "lat": 19.0760,
+        "lng": 72.8777,
+        "phone": "+91 22 2202 4321",
+        "service_specialty": "Sanjay Gandhi Niradhar Pension, Shravanbal Seva State Schemes"
+    },
+    {
+        "name": "Maha e-Seva Kendra (MH-02)",
+        "type": "Maha e-Seva Kendra",
+        "address": "District Collector Office, Pune, Maharashtra 411001",
+        "state": "Maharashtra",
+        "lat": 18.5204,
+        "lng": 73.8567,
+        "phone": "+91 20 2612 3456",
+        "service_specialty": "Unorganized worker pensions, PM-SYM, Housing Schemes"
+    },
+    {
+        "name": "Maha e-Seva Kendra (MH-03)",
+        "type": "Maha e-Seva Kendra",
+        "address": "Collectorate Compound, Civil Lines, Nagpur, Maharashtra 440001",
+        "state": "Maharashtra",
+        "lat": 21.1458,
+        "lng": 79.0882,
+        "phone": "+91 712 256 1234",
+        "service_specialty": "Widow & Old Age pensions, PMUY LPG distributor support"
+    },
+    {
+        "name": "Maha e-Seva Kendra (MH-04)",
+        "type": "Maha e-Seva Kendra",
+        "address": "District Collector Office, Nashik, Maharashtra 422002",
+        "state": "Maharashtra",
+        "lat": 19.9975,
+        "lng": 73.7898,
+        "phone": "+91 253 257 8899",
+        "service_specialty": "Farmers Scheme registrations, Sanjay Gandhi Niradhar"
+    },
+
+    # --- Uttar Pradesh (Jan Seva Kendra - CSC) ---
+    {
+        "name": "Jan Seva Kendra (CSC-UP01)",
+        "type": "Common Service Centre (CSC)",
+        "address": "Collectorate Office, Hazratganj, Lucknow, Uttar Pradesh 226001",
+        "state": "Uttar Pradesh",
+        "lat": 26.8467,
+        "lng": 80.9462,
+        "phone": "+91 522 262 3045",
+        "service_specialty": "UP Widow/Destitute Women Pension, PM-SYM, Jan Dhan services"
+    },
+    {
+        "name": "Jan Seva Kendra (CSC-UP02)",
+        "type": "Common Service Centre (CSC)",
+        "address": "Collectorate Office, Civil Lines, Kanpur, Uttar Pradesh 208001",
+        "state": "Uttar Pradesh",
+        "lat": 26.4499,
+        "lng": 80.3319,
+        "phone": "+91 512 230 4055",
+        "service_specialty": "Old Age & Destitute Pension, Labor registration"
+    },
+    {
+        "name": "Jan Seva Kendra (CSC-UP03)",
+        "type": "Common Service Centre (CSC)",
+        "address": "District Collectorate, Kutchery, Varanasi, Uttar Pradesh 221002",
+        "state": "Uttar Pradesh",
+        "lat": 25.3176,
+        "lng": 82.9739,
+        "phone": "+91 542 250 8243",
+        "service_specialty": "PMUY LPG gas connection, Widow Welfare Scheme registrations"
+    },
+    {
+        "name": "Jan Seva Kendra (CSC-UP04)",
+        "type": "Common Service Centre (CSC)",
+        "address": "Collectorate Office, Agra, Uttar Pradesh 282001",
+        "state": "Uttar Pradesh",
+        "lat": 27.1767,
+        "lng": 78.0081,
+        "phone": "+91 562 226 5044",
+        "service_specialty": "Destitute Pension, PM-KISAN, Aadhaar Updation"
+    },
+    {
+        "name": "Jan Seva Kendra (CSC-UP05)",
+        "type": "Common Service Centre (CSC)",
+        "address": "Collectorate Office, Prayagraj, Uttar Pradesh 211002",
+        "state": "Uttar Pradesh",
+        "lat": 25.4358,
+        "lng": 81.8463,
+        "phone": "+91 532 264 1205",
+        "service_specialty": "Unorganized Sector Schemes, Old Age Pension"
+    },
+
+    # --- National / New Delhi (Other) ---
+    {
+        "name": "Common Service Centre (CSC-DL01)",
+        "type": "Common Service Centre (CSC)",
+        "address": "Palika Kendra, Connaught Place, New Delhi 110001",
+        "state": "Other",
+        "lat": 28.6139,
+        "lng": 77.2090,
+        "phone": "+91 11 2336 2345",
+        "service_specialty": "All Central Government Schemes, Aadhaar Seva Kendra, PM-SYM"
+    },
+    {
+        "name": "Aadhaar Seva Kendra (DL02)",
+        "type": "Aadhaar Seva Kendra",
+        "address": "Akshardham Metro Station Premises, New Delhi 110092",
+        "state": "Other",
+        "lat": 28.6180,
+        "lng": 77.2785,
+        "phone": "+91 11 2201 1122",
+        "service_specialty": "Aadhaar Card Enrollment & Update (Mandatory for most schemes)"
+    }
+]
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0 # Radius of the earth in km
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+def get_recommended_center_type(scheme, state):
+    if not scheme:
+        return "Government Service Centre (CSC)"
+    
+    steps_text = " ".join(scheme.get("application_steps", [])).lower()
+    scheme_name = scheme.get("scheme_name", "").lower()
+    
+    if state == "Tamil Nadu":
+        state_center = "e-Sevai Center"
+    elif state == "Maharashtra":
+        state_center = "Maha e-Seva Kendra"
+    elif state == "Bihar":
+        state_center = "Vasudha Kendra (CSC)"
+    elif state == "Uttar Pradesh":
+        state_center = "Jan Seva Kendra (CSC)"
+    else:
+        state_center = "Common Service Centre (CSC)"
+        
+    if "lpg" in scheme_name or "ujjwala" in scheme_name or "lpg" in steps_text:
+        return "LPG Distributor / Agency"
+    elif "csc" in steps_text or "common service" in steps_text:
+        return state_center
+    elif "panchayat" in steps_text or "block office" in steps_text or "social welfare" in steps_text:
+        return f"{state_center} or Local Block/Panchayat Office"
+    elif "post office" in steps_text or "bank" in steps_text or "financial" in steps_text:
+        return "Post Office / Public Sector Bank"
+    else:
+        return state_center
+
+def render_nearest_centers():
+    scheme = st.session_state.get("selected_scheme")
+    profile_state = st.session_state.profile.get("State")
+    if not profile_state or profile_state not in STATE_CITIES:
+        profile_state = "Other"
+        
+    st.markdown(f"<h2 style='color:#0f172a; font-weight:800; margin-bottom:0.5rem;'>{t('find_center_title')}</h2>", unsafe_allow_html=True)
+    if scheme:
+        st.markdown(f"<p style='color:#64748b; font-size:1.15rem; margin-bottom:1.5rem;'>{t('find_center_desc').replace('{scheme_name}', scheme.get('scheme_name', ''))}</p>", unsafe_allow_html=True)
+    
+    # Initialize coordinates to state capital default if not set
+    if "user_lat" not in st.session_state or "user_lng" not in st.session_state:
+        default_coords = STATE_CITIES[profile_state]
+        first_city = list(default_coords.keys())[0]
+        st.session_state.user_lat = default_coords[first_city][0]
+        st.session_state.user_lng = default_coords[first_city][1]
+        st.session_state.location_detected = False
+        st.session_state.prev_selected_city = first_city
+
+    # Collapsible geolocation status or success message
+    if st.session_state.get("location_detected", False):
+        st.success(t("location_success"))
+    
+    # Button columns
+    col_back, col_gps = st.columns([1.5, 2.5])
+    with col_back:
+        if st.button(t("btn_back_details"), type="secondary", use_container_width=True):
+            st.session_state.step = 5
+            st.rerun()
+            
+    with col_gps:
+        geo_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet">
+            <style>
+                body {{ margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; background: transparent; }}
+                .geo-btn {{
+                    width: 100%;
+                    padding: 11px 24px;
+                    background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 14px;
+                    font-family: 'Plus Jakarta Sans', sans-serif;
+                    font-size: 15px;
+                    font-weight: 700;
+                    cursor: pointer;
+                    box-shadow: 0 4px 6px -1px rgba(13, 148, 136, 0.3);
+                    transition: all 0.25s ease;
+                    text-align: center;
+                }}
+                .geo-btn:hover {{
+                    transform: translateY(-2px);
+                    box-shadow: 0 8px 12px -1px rgba(13, 148, 136, 0.4);
+                }}
+                .geo-btn:active {{
+                    transform: translateY(0);
+                }}
+                #status {{
+                    font-size: 13px;
+                    color: #64748b;
+                    font-weight: 500;
+                    margin-top: 4px;
+                    display: block;
+                    text-align: center;
+                }}
+            </style>
+        </head>
+        <body>
+            <button onclick="getGeoLocation()" class="geo-btn">{t('gps_detect')}</button>
+            <span id="status"></span>
+            <script>
+                function getGeoLocation() {{
+                    const status = document.getElementById('status');
+                    status.innerText = "{t('loading_location')}";
+                    if (navigator.geolocation) {{
+                        navigator.geolocation.getCurrentPosition(
+                            (position) => {{
+                                const lat = position.coords.latitude;
+                                const lng = position.coords.longitude;
+                                
+                                const parentDoc = window.parent.document;
+                                const inputs = parentDoc.querySelectorAll('input');
+                                let latInput = null;
+                                let lngInput = null;
+                                
+                                for (let input of inputs) {{
+                                    if (input.placeholder === "lat_val") latInput = input;
+                                    if (input.placeholder === "lng_val") lngInput = input;
+                                }}
+                                
+                                if (latInput && lngInput) {{
+                                    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                                    
+                                    nativeSetter.call(latInput, lat.toString());
+                                    latInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    
+                                    nativeSetter.call(lngInput, lng.toString());
+                                    lngInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    status.innerText = "";
+                                }} else {{
+                                    status.innerText = "Internal UI binding error";
+                                }}
+                            }},
+                            (error) => {{
+                                console.error(error);
+                                status.innerText = "{t('location_error')}";
+                            }},
+                            {{ enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }}
+                        );
+                    }} else {{
+                        status.innerText = "Browser doesn't support geolocation";
+                    }}
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        components.html(geo_html, height=75)
+
+    # Hidden text inputs for communicating coordinates from JS to Python
+    st.markdown("""
+    <style>
+        div[data-testid="stHorizontalBlock"] > div:has(input[placeholder="lat_val"]),
+        div[data-testid="stHorizontalBlock"] > div:has(input[placeholder="lng_val"]) {
+            display: none !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col_h1, col_h2 = st.columns(2)
+    with col_h1:
+        lat_val = st.text_input("Lat Input", value=str(st.session_state.user_lat), placeholder="lat_val", key="lat_widget", label_visibility="collapsed")
+    with col_h2:
+        lng_val = st.text_input("Lng Input", value=str(st.session_state.user_lng), placeholder="lng_val", key="lng_widget", label_visibility="collapsed")
+
+    # Update session state coordinates if input values change (via JS trigger)
+    if lat_val and lng_val:
+        try:
+            val_lat = float(lat_val)
+            val_lng = float(lng_val)
+            if abs(val_lat - st.session_state.user_lat) > 0.00001 or abs(val_lng - st.session_state.user_lng) > 0.00001:
+                st.session_state.user_lat = val_lat
+                st.session_state.user_lng = val_lng
+                st.session_state.location_detected = True
+                st.rerun()
+        except ValueError:
+            pass
+
+    st.write("")
+    st.markdown(f"**{t('manual_select')}**")
+    
+    col_state, col_city = st.columns(2)
+    with col_state:
+        selected_state = st.selectbox(t("select_state"), list(STATE_CITIES.keys()), index=list(STATE_CITIES.keys()).index(profile_state) if profile_state in STATE_CITIES else 0)
+    with col_city:
+        cities = STATE_CITIES[selected_state]
+        city_keys = list(cities.keys())
+        default_city_idx = 0
+        if "prev_selected_city" in st.session_state and st.session_state.prev_selected_city in city_keys:
+            default_city_idx = city_keys.index(st.session_state.prev_selected_city)
+        selected_city = st.selectbox(t("select_city"), city_keys, index=default_city_idx)
+        
+    # Trigger manual location coordinate update
+    if "prev_selected_city" not in st.session_state or st.session_state.prev_selected_city != selected_city or st.session_state.get("prev_selected_state") != selected_state:
+        st.session_state.prev_selected_city = selected_city
+        st.session_state.prev_selected_state = selected_state
+        coords = cities[selected_city]
+        st.session_state.user_lat = coords[0]
+        st.session_state.user_lng = coords[1]
+        st.session_state.location_detected = False
+        st.rerun()
+
+    user_lat = st.session_state.user_lat
+    user_lng = st.session_state.user_lng
+    
+    # Calculate distances
+    for center in APPLICATION_CENTERS:
+        center["distance"] = haversine_distance(user_lat, user_lng, center["lat"], center["lng"])
+        
+    # Sort centers by distance
+    sorted_centers = sorted(APPLICATION_CENTERS, key=lambda x: x["distance"])
+    
+    # Check if there are centers in the user's selected state
+    state_filtered_centers = [c for c in sorted_centers if c["state"] == selected_state]
+    
+    rec_type = get_recommended_center_type(scheme, selected_state)
+    
+    st.write("")
+    st.markdown(f"<div class='premium-card' style='background: #f0fdf4; border: 1px solid #99f6e4; padding: 1.25rem; margin-bottom: 1rem;'><strong>💡 {t('recommended_type')}</strong> <span style='color:#0d9488; font-weight:700;'>{rec_type}</span></div>", unsafe_allow_html=True)
+    
+    has_local_centers = len(state_filtered_centers) > 0
+    if not has_local_centers:
+        st.warning(t("no_centers_state"))
+        display_centers = sorted_centers[:5]
+    else:
+        display_centers = state_filtered_centers
+
+    # Map integration bounds
+    bounds_js = [f"[{user_lat}, {user_lng}]"]
+    for c in display_centers[:5]:
+        bounds_js.append(f"[{c['lat']}, {c['lng']}]")
+    bounds_js_str = ", ".join(bounds_js)
+
+    centers_js_list = []
+    for c in display_centers[:5]:
+        popup_content = f"""
+        <div style='font-family: sans-serif; font-size: 13px; line-height: 1.4; padding: 4px;'>
+            <b style='font-size: 14px;'>{c['name']}</b><br/>
+            <span style='color: #0d9488; font-weight: 600;'>{c['type']}</span><br/>
+            <span style='color: #475569;'>{c['address']}</span><br/>
+            <b>Phone:</b> {c.get('phone', 'N/A')}<br/>
+            <b>Distance:</b> {c['distance']:.1f} km<br/>
+            <a href='https://www.google.com/maps/dir/?api=1&destination={c['lat']},{c['lng']}' target='_blank' style='display: inline-block; margin-top: 8px; color: white; background: #0d9488; padding: 5px 10px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 11px;'>Directions</a>
+        </div>
+        """
+        popup_escaped = popup_content.replace('"', '\\"').replace('\n', ' ')
+        centers_js_list.append(f"""
+        L.marker([{c['lat']}, {c['lng']}], {{icon: centerIcon}})
+            .addTo(map)
+            .bindPopup("{popup_escaped}");
+        """)
+    centers_js_str = "\n".join(centers_js_list)
+
+    map_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <style>
+            #map {{ height: 350px; width: 100%; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
+            body {{ margin: 0; padding: 0; }}
+        </style>
+    </head>
+    <body>
+        <div id="map"></div>
+        <script>
+            var map = L.map('map');
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                attribution: '© OpenStreetMap contributors'
+            }}).addTo(map);
+
+            var userIcon = L.icon({{
+                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                iconSize: [25, 41],
+                iconAnchor: [12, 41],
+                popupAnchor: [1, -34],
+                shadowSize: [41, 41]
+            }});
+
+            var centerIcon = L.icon({{
+                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                iconSize: [25, 41],
+                iconAnchor: [12, 41],
+                popupAnchor: [1, -34],
+                shadowSize: [41, 41]
+            }});
+
+            L.marker([{user_lat}, {user_lng}], {{icon: userIcon}}).addTo(map).bindPopup("<b>Your Location</b>").openPopup();
+
+            {centers_js_str}
+
+            var points = [{bounds_js_str}];
+            var bounds = L.latLngBounds(points);
+            map.fitBounds(bounds, {{padding: [40, 40]}});
+        </script>
+    </body>
+    </html>
+    """
+    
+    st.write("")
+    components.html(map_html, height=370)
+    
+    st.markdown(f"### {t('nearest_center')}")
+    
+    # List nearest centers
+    for idx, c in enumerate(display_centers):
+        is_nearest = idx == 0
+        bg_style = "background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #0d9488; box-shadow: 0 10px 15px -3px rgba(13, 148, 136, 0.1);" if is_nearest else "background: #ffffff; border: 1px solid #e2e8f0;"
+        badge = f"<span style='color: #0f766e; background: #ccfbf1; padding: 4px 10px; border-radius: 12px; font-weight: 700; font-size: 0.8rem; margin-right: 8px; border: 1px solid #99f6e4;'>🥇 {t('nearest_center').upper()}</span>" if is_nearest else ""
+        
+        st.markdown(f"""
+        <div class="premium-card" style="{bg_style} padding: 1.5rem; margin-bottom: 1rem; border-radius: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 8px;">
+                <div>
+                    <h4 style="margin: 0 0 0.5rem 0; font-size: 1.15rem; color: #0f172a; font-weight: 700;">{badge}{c['name']}</h4>
+                    <span style="color:#0d9488; font-weight:600; font-size:0.9rem; display: block; margin-bottom: 0.5rem;">{c['type']}</span>
+                </div>
+                <div style="text-align: right;">
+                    <span style="font-weight: 700; color: #1e293b; font-size: 1rem; background: #f1f5f9; padding: 6px 12px; border-radius: 8px; display: inline-block;">{t('distance_km').replace('{distance}', f"{c['distance']:.1f}")}</span>
+                </div>
+            </div>
+            <p style="color: #475569; font-size: 0.95rem; margin: 0.5rem 0 0.75rem 0; line-height: 1.5;">📍 {c['address']}</p>
+            <p style="color: #64748b; font-size: 0.9rem; margin: 0.25rem 0 1rem 0;">📞 <b>Phone:</b> {c['phone']} | <b>Specialty:</b> {c['service_specialty']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.link_button(t("directions"), f"https://www.google.com/maps/dir/?api=1&destination={c['lat']},{c['lng']}", use_container_width=True)
+        st.write("")
+
 def main():
     setup_page()
     init_session()
@@ -992,6 +1650,8 @@ def main():
         render_detail()
     elif st.session_state.step == 6:
         render_no_match()
+    elif st.session_state.step == 7:
+        render_nearest_centers()
 
 if __name__ == "__main__":
     main()

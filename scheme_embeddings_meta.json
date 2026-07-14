@@ -1,0 +1,30 @@
+{
+  "num_schemes": 11,
+  "dimension": 384,
+  "scheme_texts": [
+    "Indira Gandhi National Widow Pension Scheme (IGNWPS). Category: widow pension. Must be a widow aged 40 or above, living below the poverty line.. Financial assistance of ₹300/month (varies by state) to widows below the poverty line.. Keywords: widow, pension, death, bpl, female. Target: For female. Marital status: widow. Income limit: Rs 100000. Age: 40-120 years",
+    "Pradhan Mantri Shram Yogi Maan-dhan (PM-SYM). Category: employment. Unorganized sector workers aged 18-40 years with a monthly income of ₹15,000 or less.. Assured monthly pension of ₹3000 after attaining the age of 60 years.. Keywords: worker, unorganized, pension, labour, employment. Target: For male, female, other. Occupation: unorganized, worker, farmer, unemployed, labourer. Income limit: Rs 180000. Age: 18-40 years",
+    "Pradhan Mantri Ujjwala Yojana (PMUY). Category: women. Adult women belonging to BPL households with no existing LPG connection.. Provides a deposit-free LPG connection to women from BPL households.. Keywords: gas, cylinder, lpg, women, bpl, ujjwala. Target: For female. Income limit: Rs 100000. Age: 18-120 years",
+    "Pradhan Mantri Awas Yojana (PMAY). Category: housing. Economically weaker sections or lower income groups needing housing assistance.. Credit linked subsidy scheme for buying or building a pucca house.. Keywords: house, home, subsidy, loan, construction, housing. Target: For male, female, other. Income limit: Rs 1800000. Age: 18-120 years",
+    "PM Kisan Samman Nidhi. Category: farmer. All landholding farmers' families having cultivable land.. Income support of ₹6,000 per year in three equal installments.. Keywords: farmer, agriculture, land, kisan, cultivation. Target: For male, female, other. Occupation: farmer, agriculture. Income limit: Rs 5000000. Age: 18-120 years",
+    "National Scholarship Portal (NSP). Category: student. Students from minority communities or economically weaker sections pursuing higher education.. Financial assistance covering tuition fees and maintenance allowance for students.. Keywords: student, education, school, college, scholarship, study. Target: For male, female, other. Occupation: student. Income limit: Rs 250000. Age: 5-30 years",
+    "Indira Gandhi National Old Age Pension Scheme (IGNOAPS). Category: senior citizen. Citizens aged 60 years or above belonging to a BPL household.. Monthly pension of ₹200 to ₹500 depending on age and state contributions.. Keywords: old age, senior citizen, pension, elderly, 60 plus. Target: For male, female, other. Income limit: Rs 100000. Age: 60-120 years",
+    "Deendayal Disabled Rehabilitation Scheme (DDRS). Category: disability. Persons with disabilities needing rehabilitation services.. Financial assistance provided through NGOs for education, vocational training, and rehabilitation of disabled persons.. Keywords: disabled, handicap, rehabilitation, special needs, divyang. Target: For male, female, other. Income limit: Rs 300000",
+    "Bihar State Widow Pension Scheme. Category: state pension. Widows residing in Bihar aged 18 or above, with annual income below ₹60,000.. Monthly pension for widows residing in Bihar.. Keywords: widow, pension, bihar, state, female. Target: For female. Marital status: widow. State: bihar. Income limit: Rs 60000. Age: 18-120 years",
+    "Mukhyamantri Mahila Rojgar Yojana. Category: women welfare. Women aged 18-50 residing in Maharashtra, Bihar, or Uttar Pradesh with annual income below ₹2,00,000.. Financial assistance and subsidized loans for women to start micro-enterprises.. Keywords: women, loan, employment, business, subsidy. Target: For female. State: maharashtra, bihar, uttar pradesh. Income limit: Rs 200000. Age: 18-50 years",
+    "e-Shram Support. Category: employment. Unorganized workers, farmers, or unemployed individuals aged 16-59.. Accidental insurance cover of ₹2 Lakhs under PMSBY and social security benefits.. Keywords: worker, unorganized, insurance, accident, unemployed. Target: For male, female, other. Occupation: unorganized, worker, farmer, unemployed, labourer. Income limit: Rs 1000000. Age: 16-59 years"
+  ],
+  "scheme_names": [
+    "Indira Gandhi National Widow Pension Scheme (IGNWPS)",
+    "Pradhan Mantri Shram Yogi Maan-dhan (PM-SYM)",
+    "Pradhan Mantri Ujjwala Yojana (PMUY)",
+    "Pradhan Mantri Awas Yojana (PMAY)",
+    "PM Kisan Samman Nidhi",
+    "National Scholarship Portal (NSP)",
+    "Indira Gandhi National Old Age Pension Scheme (IGNOAPS)",
+    "Deendayal Disabled Rehabilitation Scheme (DDRS)",
+    "Bihar State Widow Pension Scheme",
+    "Mukhyamantri Mahila Rojgar Yojana",
+    "e-Shram Support"
+  ]
+}

@@ -1,146 +1,40 @@
+"""
+logic.py
 
+Hybrid AI Recommendation Engine for the Adhikaar Scheme Eligibility Platform.
+
+This module orchestrates a multi-stage pipeline:
+  Stage 1: Semantic Retrieval (embeddings.py) — find semantically relevant schemes.
+  Stage 2: Rule Validation — validate hard eligibility constraints with graduated penalties.
+  Stage 3: LLM Re-Ranking (llm_reranker.py) — contextual re-ranking via Google Gemini.
+  Stage 4: Score Fusion — weighted combination of all signals.
+
+Changes from the original version:
+- Removed dead `load_schemes()` function (was duplicating schemes.json).
+- Softened rule scoring: single-field mismatches no longer kill the entire score.
+- Integrated semantic search and LLM re-ranking into the pipeline.
+- `get_top_matches()` now returns all schemes above a threshold (not a hard top_n cap).
+- All existing function signatures preserved for backward compatibility with app.py.
+
+AI Concepts:
+1. Semantic Retrieval (Dense Retrieval via FAISS)
+2. Expert System (Rule-Based Constraint Validation)
+3. LLM-as-a-Judge (Re-Ranking)
+4. Weighted Score Fusion (Ensemble Learning)
+5. User Segmentation (Demographic Clustering)
+6. Explainable AI (XAI Breakdowns)
+"""
 
 import json
-def load_schemes():
-    """
-    Load a hardcoded list of government schemes with their eligibility rules.
-    """
-    return [
-        {
-            "id": "ignwps",
-            "scheme_name": "Indira Gandhi National Widow Pension Scheme (IGNWPS)",
-            "category": "Pension",
-            "conditions": {
-                "gender": ["female"],
-                "marital_status": ["widow"],
-                "min_age": 40,
-                "max_income": 100000
-            },
-            "required_documents": ["Aadhaar Card", "BPL Ration Card", "Husband's Death Certificate", "Bank Account Passbook", "Age Proof"],
-            "official_apply_link": "https://nsap.nic.in/",
-            "benefit_summary": "Financial assistance of ₹300/month (varies by state) to widows below the poverty line.",
-            "application_steps": [
-                "Visit the nearest Gram Panchayat or Block Office.",
-                "Obtain the IGNWPS application form.",
-                "Fill the form and attach the required documents.",
-                "Submit to the Social Welfare Department officer."
-            ]
-        },
-        {
-            "id": "pmsym",
-            "scheme_name": "Pradhan Mantri Shram Yogi Maan-dhan (PM-SYM)",
-            "category": "Pension",
-            "conditions": {
-                "min_age": 18,
-                "max_age": 40,
-                "max_income": 180000,
-                "occupation": ["unorganized", "worker", "farmer", "unemployed", "labourer"]
-            },
-            "required_documents": ["Aadhaar Card", "Savings Bank Account / Jan Dhan Account with IFSC"],
-            "official_apply_link": "https://maandhan.in/",
-            "benefit_summary": "Assured monthly pension of ₹3000 after attaining the age of 60 years.",
-            "application_steps": [
-                "Visit nearest Common Service Centre (CSC).",
-                "Carry Aadhaar and Bank account details.",
-                "Initial contribution amount in cash will be made to the Village Level Entrepreneur (VLE)."
-            ]
-        },
-        {
-            "id": "ujjwala",
-            "scheme_name": "Pradhan Mantri Ujjwala Yojana (PMUY)",
-            "category": "Women",
-            "conditions": {
-                "gender": ["female"],
-                "min_age": 18,
-                "max_income": 100000
-            },
-            "required_documents": ["Aadhaar Card", "Ration Card", "Bank Account Details", "Passport Size Photograph"],
-            "official_apply_link": "https://www.pmuy.gov.in/",
-            "benefit_summary": "Provides a deposit-free LPG connection to women from BPL households.",
-            "application_steps": [
-                "Download the application form from PMUY website or collect it from nearest LPG distributor.",
-                "Fill the form and submit it at the LPG distributor office.",
-                "Document verification will be done before issuing connection."
-            ]
-        },
-        {
-            "id": "pmay",
-            "scheme_name": "Pradhan Mantri Awas Yojana (PMAY)",
-            "category": "Housing",
-            "conditions": {
-                "max_income": 1800000
-            },
-            "required_documents": ["Aadhaar Card", "Income Proof", "Property Documents", "Bank Statement"],
-            "official_apply_link": "https://pmaymis.gov.in/",
-            "benefit_summary": "Credit linked subsidy scheme for buying or building a house.",
-            "application_steps": [
-                "Apply online on PMAY portal or through CSCs.",
-                "Fill application with Aadhaar details.",
-                "Apply for home loan at banks/HFCs claiming PMAY subsidy."
-            ]
-        },
-        {
-            "id": "bihar_widow",
-            "scheme_name": "Bihar State Widow Pension Scheme",
-            "category": "State-specific",
-            "conditions": {
-                "state": ["bihar"],
-                "marital_status": ["widow"],
-                "min_age": 18,
-                "max_income": 60000
-            },
-            "required_documents": ["Aadhaar Card", "Husband's Death Certificate", "Income Certificate", "Domicile Certificate of Bihar"],
-            "official_apply_link": "https://sspmis.bihar.gov.in/",
-            "benefit_summary": "Monthly pension for widows residing in Bihar.",
-            "application_steps": [
-                "Apply online on SSPMIS portal or visit RTPS counter.",
-                "Provide Aadhaar and bank details.",
-                "Submit hard copies to the block office if required."
-            ]
-        },
-        {
-            "id": "eshram",
-            "scheme_name": "e-Shram Support",
-            "category": "Employment",
-            "conditions": {
-                "min_age": 16,
-                "max_age": 59,
-                "occupation": ["unorganized", "worker", "farmer", "unemployed", "labourer"]
-            },
-            "required_documents": ["Aadhaar Card", "Aadhaar linked active mobile number", "Bank account details"],
-            "official_apply_link": "https://eshram.gov.in/",
-            "benefit_summary": "Accidental insurance cover of ₹2 Lakhs under PMSBY and social security benefits.",
-            "application_steps": [
-                "Visit e-Shram portal.",
-                "Self-register using Aadhaar linked mobile number.",
-                "Fill personal, address, and bank details."
-            ]
-        },
-        {
-            "id": "mahila_rojgar",
-            "scheme_name": "Mukhyamantri Mahila Rojgar Yojana",
-            "category": "Women",
-            "conditions": {
-                "gender": ["female"],
-                "min_age": 18,
-                "max_age": 50,
-                "state": ["maharashtra", "bihar", "uttar pradesh"],
-                "max_income": 200000
-            },
-            "required_documents": ["Aadhaar Card", "Project Report", "Caste Certificate (if applicable)", "Bank Details"],
-            "official_apply_link": "https://www.india.gov.in/",
-            "benefit_summary": "Financial assistance and subsidized loans for women to start micro-enterprises.",
-            "application_steps": [
-                "Visit the District Industries Centre (DIC).",
-                "Submit the project proposal and application.",
-                "Bank approval and subsidy disbursement."
-            ]
-        }
-    ]
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def normalize_profile(profile):
     """
     Normalize user profile data for matching logic.
+    Handles string-to-number conversion, currency normalization, etc.
     """
     p = {}
     for k, v in profile.items():
@@ -182,6 +76,7 @@ def normalize_profile(profile):
         
     return p
 
+
 def segment_user(profile):
     """
     AI Concept: User Segmentation / Clustering
@@ -220,46 +115,54 @@ def segment_user(profile):
 
     return list(segments)
 
+
 def calculate_relevance_score(profile, scheme, user_segments):
     """
     AI Concept: Content-Based Filtering / Relevance Scoring
     Calculates Jaccard-like keyword overlap between user profile and scheme keywords.
+    This now serves as a lightweight fallback/supplement to the semantic search score.
     """
     scheme_keywords = set(k.lower() for k in scheme.get("match_keywords", []))
     
     if not scheme_keywords:
-        return 50 # Default relevance if no keywords defined
+        return 50  # Default relevance if no keywords defined
 
     # Implicit keywords derived from profile
     user_keywords = set(user_segments)
     if profile.get('occupation'):
         user_keywords.add(str(profile['occupation']).lower())
-    if profile.get('state') and profile['state'] != "Other":
+    if profile.get('state') and profile['state'] != "other":
         user_keywords.add(str(profile['state']).lower())
         
-    # Calculate Jaccard similarity or simple intersection score
+    # Calculate intersection-based score
     intersection = len(user_keywords.intersection(scheme_keywords))
-    union = len(scheme_keywords) # Using scheme_keywords size as base to not penalize users with lots of segments
+    union = len(scheme_keywords)
     
     if union == 0:
         return 50
         
     relevance_pct = min(100, int((intersection / union) * 100))
-    # Give a base score so we don't zero out completely unless absolutely irrelevant
     return max(20, relevance_pct)
+
 
 def calculate_rule_score(profile, scheme):
     """
-    AI Concept: Expert System / Rule-Based Logic
-    Validates hard constraints.
-    Returns: score (0-100), critical_mismatch (bool), why_matched (list), why_not_matched (list), missing_fields (list)
+    AI Concept: Expert System / Rule-Based Logic with Graduated Penalties.
+    
+    UPGRADED: Instead of a binary critical_mismatch that kills the score,
+    we use graduated penalties. Each dimension contributes independently
+    to a total score. Missing fields get a small penalty rather than 
+    blocking the match entirely.
+    
+    Returns: score (0-100), has_hard_block (bool), why_matched (list), 
+             why_not_matched (list), missing_fields (list)
     """
     matched_conditions = 0
     total_conditions = 0
     why_matched = []
     why_not_matched = []
     missing_fields = []
-    critical_mismatch = False
+    has_hard_block = False  # Only True for absolute dealbreakers
 
     # 1. Gender
     scheme_gender = scheme.get('gender', [])
@@ -271,7 +174,8 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append(f"Gender matches ({profile['gender'].capitalize()})")
             else:
                 why_not_matched.append(f"Requires gender: {', '.join(scheme_gender).capitalize()}")
-                critical_mismatch = True
+                # Gender is a hard block for gender-specific schemes
+                has_hard_block = True
         else:
             missing_fields.append("gender")
 
@@ -285,7 +189,8 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append(f"Marital status matches ({profile['marital_status'].capitalize()})")
             else:
                 why_not_matched.append(f"Requires marital status: {', '.join(scheme_marital).capitalize()}")
-                critical_mismatch = True
+                # Marital status is a hard block for marital-specific schemes (e.g., widow pension)
+                has_hard_block = True
         else:
             missing_fields.append("marital_status")
 
@@ -299,7 +204,7 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append(f"Resident of eligible state ({profile['state'].capitalize()})")
             else:
                 why_not_matched.append(f"Requires residence in: {', '.join([s.capitalize() for s in scheme_state])}")
-                critical_mismatch = True
+                # State mismatch is a soft penalty — many schemes have expanded coverage
         else:
             missing_fields.append("state")
 
@@ -315,7 +220,8 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append(f"Age {profile['age']} is within eligible range ({min_age}-{max_age} yrs)")
             else:
                 why_not_matched.append(f"Age must be between {min_age} and {max_age} years")
-                critical_mismatch = True
+                # Age outside range is a hard block
+                has_hard_block = True
         else:
             missing_fields.append("age")
 
@@ -329,7 +235,7 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append(f"Income ₹{profile['income']:,.0f} is within limit (Max ₹{max_income:,.0f})")
             else:
                 why_not_matched.append(f"Income exceeds the maximum limit of ₹{max_income:,.0f}")
-                critical_mismatch = True
+                # Income over limit is NOT always a hard block — some schemes have flexibility
         else:
             missing_fields.append("income")
 
@@ -343,78 +249,133 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append(f"Occupation ({profile['occupation'].capitalize()}) is eligible")
             else:
                 why_not_matched.append(f"Occupation must be one of: {', '.join(scheme_occupation).capitalize()}")
-                critical_mismatch = True
+                # Occupation mismatch is a soft penalty
         else:
             missing_fields.append("occupation")
 
-    rule_score = 100 if total_conditions == 0 else int((matched_conditions / total_conditions) * 100)
+    # Calculate base rule score
+    if total_conditions == 0:
+        rule_score = 100
+    else:
+        rule_score = int((matched_conditions / total_conditions) * 100)
     
-    # Penalize heavily if missing fields exist but no critical mismatch
-    if len(missing_fields) > 0 and not critical_mismatch:
-        rule_score = max(0, rule_score - (len(missing_fields) * 15))
+    # Apply graduated penalty for missing fields (instead of a hard block)
+    # Each missing field reduces confidence by 8 points (softer than the old 15)
+    if missing_fields and not has_hard_block:
+        rule_score = max(0, rule_score - (len(missing_fields) * 8))
 
-    return rule_score, critical_mismatch, why_matched, why_not_matched, missing_fields
+    return rule_score, has_hard_block, why_matched, why_not_matched, missing_fields
 
-def fuse_scores(rule_score, relevance_score, priority_score, critical_mismatch):
+
+def fuse_scores(rule_score, relevance_score, semantic_score, llm_score, priority_score, has_hard_block):
     """
-    AI Concept: Weighted Score Fusion
-    Combines rule validation (60%), semantic relevance (30%), and priority base (10%).
+    AI Concept: Weighted Score Fusion (Ensemble).
+    
+    UPGRADED weights to incorporate all four signals:
+    - 35% semantic search score (new — captures meaning-based relevance)
+    - 30% rule validation score (existing — hard constraint checking)
+    - 20% LLM re-ranking score (new — contextual intelligence)
+    - 10% keyword relevance score (existing — keyword overlap, now supplementary)
+    - 5% priority score (existing — editorial priority)
+    
+    When LLM is unavailable (score=50 default), the effective weights shift
+    toward semantic and rules, which is the desired behavior.
     """
-    if critical_mismatch:
-        return min(rule_score, 20), "No Match"  # hard floor for critical mismatches
+    if has_hard_block:
+        # Hard blocks still significantly reduce the score, but don't zero it out.
+        # This allows hard-blocked schemes to appear as "Low Match" with explanations
+        # instead of being completely hidden.
+        penalty_score = min(rule_score, 25)
+        return penalty_score, "Low Match"
 
-    w_rule = 0.60
-    w_rel = 0.30
-    w_prio = 0.10
+    w_semantic = 0.35
+    w_rule = 0.30
+    w_llm = 0.20
+    w_rel = 0.10
+    w_prio = 0.05
     
     norm_prio = min(100, max(0, priority_score))
-    final_score = (rule_score * w_rule) + (relevance_score * w_rel) + (norm_prio * w_prio)
+    norm_semantic = min(100, max(0, semantic_score))
+    norm_llm = min(100, max(0, llm_score))
+    
+    final_score = (
+        (norm_semantic * w_semantic) +
+        (rule_score * w_rule) +
+        (norm_llm * w_llm) +
+        (relevance_score * w_rel) +
+        (norm_prio * w_prio)
+    )
     final_score = int(min(100, max(0, final_score)))
     
-    if final_score >= 75 and rule_score >= 80:
+    if final_score >= 75 and rule_score >= 70:
         status = "Full Match"
-    elif final_score >= 40:
+    elif final_score >= 45:
         status = "Partial Match"
-    else:
+    elif final_score >= 25:
         status = "Low Match"
+    else:
+        status = "No Match"
         
     return final_score, status
 
-def score_scheme(profile, scheme):
+
+def score_scheme(profile, scheme, semantic_score=50, llm_score=50, llm_explanation=""):
     """
     Orchestrator for the Hybrid AI Recommendation Pipeline.
+    
+    Combines:
+    1. User segmentation (clustering)
+    2. Rule validation (expert system) — with graduated penalties
+    3. Keyword relevance (content-based filtering)
+    4. Semantic similarity (dense retrieval) — from embeddings.py
+    5. LLM re-ranking (contextual intelligence) — from llm_reranker.py
+    6. Score fusion (ensemble)
     """
-    # 1. Segment User (Clustering)
+    # 1. Segment User
     user_segments = segment_user(profile)
     
-    # 2. Rule Validation (Expert System)
-    rule_score, critical_mismatch, why_matched, why_not_matched, missing_fields = calculate_rule_score(profile, scheme)
+    # 2. Rule Validation
+    rule_score, has_hard_block, why_matched, why_not_matched, missing_fields = calculate_rule_score(profile, scheme)
     
-    # 3. Content Relevance (Information Retrieval)
+    # 3. Keyword Relevance
     relevance_score = calculate_relevance_score(profile, scheme, user_segments)
     
-    # 4. Feature Extraction
+    # 4. Priority Score
     priority_score = scheme.get("priority_score", 50)
     
-    # 5. Score Fusion (Ensemble logic)
-    final_score, match_status = fuse_scores(rule_score, relevance_score, priority_score, critical_mismatch)
+    # 5. Score Fusion (semantic_score and llm_score are passed in from the pipeline)
+    final_score, match_status = fuse_scores(
+        rule_score, relevance_score, semantic_score, llm_score, priority_score, has_hard_block
+    )
     
+    # Add missing field warnings
     for field in missing_fields:
         why_not_matched.append(f"Missing information: Please provide your {field.replace('_', ' ')}")
 
     # 6. Explainability Breakdown (XAI)
     xai_breakdown = {
-        "rule_contribution": f"{rule_score}% (weight: 60%)",
-        "relevance_contribution": f"{relevance_score}% (weight: 30%)",
-        "priority_contribution": f"{priority_score}% (weight: 10%)"
+        "semantic_contribution": f"{semantic_score}% (weight: 35%)",
+        "rule_contribution": f"{rule_score}% (weight: 30%)",
+        "llm_contribution": f"{llm_score}% (weight: 20%)",
+        "relevance_contribution": f"{relevance_score}% (weight: 10%)",
+        "priority_contribution": f"{priority_score}% (weight: 5%)"
     }
 
-    # Inject AI reasoning into the positive feedback list so the UI can display it
-    if not critical_mismatch:
-        why_matched.insert(0, f"🧠 AI Score Breakdown: Rules={rule_score}%, Relevance={relevance_score}%, Priority={priority_score}")
+    # Inject AI reasoning into the positive feedback list
+    if not has_hard_block:
+        ai_summary = (
+            f"🧠 AI Score Breakdown: Semantic={semantic_score}%, "
+            f"Rules={rule_score}%, LLM={llm_score}%, "
+            f"Relevance={relevance_score}%, Priority={priority_score}"
+        )
+        why_matched.insert(0, ai_summary)
+
+    # Add LLM explanation if available
+    if llm_explanation and llm_explanation not in ("LLM re-ranking unavailable", "Not evaluated by LLM"):
+        why_matched.append(f"🤖 AI Analysis: {llm_explanation}")
 
     return {
-        "scheme_name": scheme["scheme_name"],
+        "scheme_name": scheme.get("scheme_name", "Unknown Scheme"),
         "match_status": match_status,
         "match_score": final_score,
         "why_matched": why_matched,
@@ -428,9 +389,11 @@ def score_scheme(profile, scheme):
         "xai_breakdown": xai_breakdown
     }
 
+
 def match_user_to_schemes(user_profile, schemes_data):
     """
-    Match a user profile against all available schemes.
+    Match a user profile against all available schemes (rule-based only fallback).
+    Used when semantic search is not available.
     """
     normalized_profile = normalize_profile(user_profile)
     
@@ -441,11 +404,13 @@ def match_user_to_schemes(user_profile, schemes_data):
         
     return results
 
+
 def rank_schemes(scored_schemes):
     """
     Rank matched schemes based on their match score in descending order.
     """
     return sorted(scored_schemes, key=lambda x: x['match_score'], reverse=True)
+
 
 def explain_match(scored_scheme):
     """
@@ -470,11 +435,108 @@ def explain_match(scored_scheme):
         
     return explanation.strip()
 
-def get_top_matches(user_profile, schemes_data, top_n=5):
-    """
-    Get the top N matching schemes for a user profile.
-    """
-    scored = match_user_to_schemes(user_profile, schemes_data)
-    ranked = rank_schemes(scored)
-    return ranked[:top_n]
 
+def get_top_matches(user_profile, schemes_data, top_n=15, user_text="", score_threshold=25):
+    """
+    Get the top matching schemes using the full AI pipeline.
+    
+    Pipeline:
+    1. Semantic Retrieval (FAISS) — retrieve all schemes ranked by semantic similarity.
+    2. Rule Validation — score each retrieved scheme against hard constraints.
+    3. LLM Re-Ranking (Gemini) — contextually re-rank candidates.
+    4. Score Fusion — combine all signals.
+    5. Return all schemes above the score threshold, sorted by final score.
+    
+    Args:
+        user_profile: Dict with user's profile fields (may not be normalized yet).
+        schemes_data: List of scheme dicts from schemes.json.
+        top_n: Maximum number of results to return.
+        user_text: Raw text the user typed/spoke (used for semantic search).
+        score_threshold: Minimum final score to include in results (default: 25%).
+        
+    Returns:
+        List of scored scheme dicts, sorted by match_score descending.
+    """
+    normalized_profile = normalize_profile(user_profile)
+    
+    # --- Stage 1: Semantic Retrieval ---
+    semantic_scores = {}
+    try:
+        from embeddings import semantic_search
+        
+        semantic_results = semantic_search(
+            normalized_profile,
+            schemes_data,
+            user_text=user_text,
+            top_k=len(schemes_data)  # Retrieve all schemes with scores
+        )
+        
+        # Map scheme names to semantic scores
+        for result in semantic_results:
+            scheme_name = result["scheme"].get("scheme_name", "")
+            semantic_scores[scheme_name] = result["semantic_score"]
+            
+        logger.info(f"Semantic search returned scores for {len(semantic_scores)} schemes.")
+        
+    except ImportError:
+        logger.warning("embeddings module not available. Using keyword relevance only.")
+    except Exception as e:
+        logger.warning(f"Semantic search failed: {e}. Falling back to keyword relevance.")
+
+    # --- Stage 2 & 3: Prepare candidates for LLM re-ranking ---
+    # Build candidates list with semantic scores attached
+    candidates = []
+    for scheme in schemes_data:
+        scheme_name = scheme.get("scheme_name", "")
+        sem_score = semantic_scores.get(scheme_name, 50)  # Default 50 if not available
+        candidates.append({
+            "scheme": scheme,
+            "semantic_score": sem_score
+        })
+
+    # --- Stage 3: LLM Re-Ranking ---
+    llm_scores = {}
+    llm_explanations = {}
+    try:
+        from llm_reranker import rerank_schemes, is_available as llm_available
+        
+        if llm_available():
+            reranked = rerank_schemes(normalized_profile, candidates)
+            for item in reranked:
+                scheme_name = item["scheme"].get("scheme_name", "")
+                llm_scores[scheme_name] = item.get("llm_score", 50)
+                llm_explanations[scheme_name] = item.get("llm_explanation", "")
+            logger.info(f"LLM re-ranking completed for {len(llm_scores)} schemes.")
+        else:
+            logger.info("LLM re-ranking not available (no API key). Using semantic + rules only.")
+            
+    except ImportError:
+        logger.warning("llm_reranker module not available. Skipping LLM re-ranking.")
+    except Exception as e:
+        logger.warning(f"LLM re-ranking failed: {e}. Continuing without LLM scores.")
+
+    # --- Stage 4: Score each scheme with all signals ---
+    results = []
+    for scheme in schemes_data:
+        scheme_name = scheme.get("scheme_name", "")
+        
+        sem_score = semantic_scores.get(scheme_name, 50)
+        llm_score = llm_scores.get(scheme_name, 50)
+        llm_explanation = llm_explanations.get(scheme_name, "")
+        
+        score_result = score_scheme(
+            normalized_profile,
+            scheme,
+            semantic_score=sem_score,
+            llm_score=llm_score,
+            llm_explanation=llm_explanation
+        )
+        results.append(score_result)
+
+    # --- Stage 5: Rank and filter ---
+    ranked = rank_schemes(results)
+    
+    # Filter by score threshold and cap at top_n
+    filtered = [r for r in ranked if r["match_score"] >= score_threshold]
+    
+    return filtered[:top_n]
