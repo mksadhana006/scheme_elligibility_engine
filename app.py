@@ -128,7 +128,29 @@ TEXTS = {
         "status_no_match": "No Match",
         "reason_no_pos": "No clear positive matches.",
         "reason_no_neg": "No major mismatches.",
-        "lbl_chips": ["Woman", "Widow", "Senior Citizen", "Farmer", "Student", "Disability", "Low Income", "Unemployed"]
+        "lbl_chips": ["Woman", "Widow", "Senior Citizen", "Farmer", "Student", "Disability", "Low Income", "Unemployed"],
+        "live_search_rate_limited": "Live search is temporarily unavailable. Showing recommendations from the local database.",
+        "ai_rate_limited": "AI re-ranking is temporarily unavailable. Showing recommendations from the local database.",
+        "browse_schemes_title": "Browse Schemes",
+        "search_placeholder": "Search schemes by name...",
+        "filter_category": "Category:",
+        "filter_state": "State/Central:",
+        "filter_beneficiary": "Beneficiary:",
+        "all_categories": "All Categories",
+        "all_states": "All / Central",
+        "all_beneficiaries": "All Beneficiaries",
+        "beneficiary_student": "Student",
+        "beneficiary_farmer": "Farmer",
+        "beneficiary_women": "Women",
+        "beneficiary_senior": "Senior Citizen",
+        "beneficiary_low_income": "Low Income / BPL",
+        "eligibility": "Eligibility:",
+        "page": "Page",
+        "prev_page": "Previous",
+        "next_page": "Next",
+        "no_schemes_found": "No schemes matching your search criteria.",
+        "browse_mode": "Browse Mode",
+        "reason_browse_mode": "Use the Eligibility Checker on the home page to find your personal match status."
     },
     "ta": {
         "app_title": "அதிகார் (Adhikaar)",
@@ -225,7 +247,29 @@ TEXTS = {
         "status_no_match": "பொருத்தம் இல்லை",
         "reason_no_pos": "தெளிவான நேர்மறையான பொருத்தங்கள் இல்லை.",
         "reason_no_neg": "பெரிய பொருத்தமின்மைகள் இல்லை.",
-        "lbl_chips": ["பெண்", "விதவை", "முதியவர்", "விவசாயி", "மாணவர்", "மாற்றுத்திறனாளி", "குறைந்த வருமானம்", "வேலையில்லாதவர்"]
+        "lbl_chips": ["பெண்", "விதவை", "முதியவர்", "விவசாயி", "மாணவர்", "மாற்றுத்திறனாளி", "குறைந்த வருமானம்", "வேலையில்லாதவர்"],
+        "live_search_rate_limited": "நேரடி தேடல் தற்காலிகமாக கிடைக்கவில்லை. உள்ளூர் தரவுத்தளத்திலிருந்து பரிந்துரைகள் காட்டப்படுகின்றன.",
+        "ai_rate_limited": "AI மறுவரிசைப்படுத்தல் தற்காலிகமாக கிடைக்கவில்லை. உள்ளூர் தரவுத்தளத்திலிருந்து பரிந்துரைகள் காட்டப்படுகின்றன.",
+        "browse_schemes_title": "திட்டங்களை உலாவுக",
+        "search_placeholder": "திட்டத்தின் பெயரைத் தேடுங்கள்...",
+        "filter_category": "வகை:",
+        "filter_state": "மாநிலம்/மத்திய:",
+        "filter_beneficiary": "பயனாளி:",
+        "all_categories": "அனைத்து பிரிவுகளும்",
+        "all_states": "அனைத்து / மத்திய",
+        "all_beneficiaries": "அனைத்து பயனாளிகளும்",
+        "beneficiary_student": "மாணவர்",
+        "beneficiary_farmer": "விவசாயி",
+        "beneficiary_women": "பெண்கள்",
+        "beneficiary_senior": "முதியவர்",
+        "beneficiary_low_income": "குறைந்த வருமானம் / BPL",
+        "eligibility": "தகுதி:",
+        "page": "பக்கம்",
+        "prev_page": "முந்தைய",
+        "next_page": "அடுத்தது",
+        "no_schemes_found": "உங்கள் தேடல் அளவுகோலுக்கு பொருந்தும் திட்டங்கள் எதுவும் இல்லை.",
+        "browse_mode": "உலாவல் முறை",
+        "reason_browse_mode": "உங்கள் தனிப்பட்ட பொருத்தம் நிலையை அறிய முகப்பு பக்கத்தில் உள்ள தகுதி சரிபார்ப்பைப் பயன்படுத்தவும்."
     }
 }
 
@@ -582,7 +626,8 @@ def render_home():
             st.rerun()
     with col_main2:
         if st.button(t("btn_browse_schemes"), use_container_width=True):
-            st.toast("Browsing all schemes (Coming soon)")
+            st.session_state.step = 8
+            st.rerun()
     st.write("")
     st.markdown(f"<p style='text-align: center; color: #0d9488; font-size: 1rem; font-weight: 600; background: #ccfbf1; padding: 8px 16px; border-radius: 20px; display: inline-block; margin: 0 auto 2rem auto;'>{t('voice_enabled')}</p>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='text-align: center; color: #1e293b; margin-bottom: 2rem; font-weight: 700;'>{t('how_it_works')}</h3>", unsafe_allow_html=True)
@@ -855,6 +900,9 @@ def render_processing():
         if st.button(t("btn_check_eligibility"), type="primary", use_container_width=True):
             with st.spinner(t("analyzing")):
                 time.sleep(1.0)
+                # Reset rate limit status flags for the new search
+                st.session_state.search_rate_limited = False
+                st.session_state.ai_rate_limited = False
                 backend_profile = build_backend_profile()
                 normalized_profile = normalize_profile(backend_profile)
                 schemes_data = load_schemes_data()
@@ -875,6 +923,10 @@ def render_results():
         total = len(st.session_state.results)
         st.markdown(f"<h2 style='color: #0f172a; font-weight: 800;'>{total} {t('schemes_found')}</h2>", unsafe_allow_html=True)
         st.markdown(f"<p style='color: #64748b; margin-top: -10px;'>{t('based_on_profile')}</p>", unsafe_allow_html=True)
+    
+    if st.session_state.get("ai_rate_limited"):
+        st.warning(t("ai_rate_limited"))
+
     with col2:
         if st.button(t("btn_start_over"), use_container_width=True):
             st.session_state.step = 1
@@ -931,6 +983,7 @@ def render_results():
         with btn_col1:
             if st.button(t("btn_view_details"), key=f"view_{i}", type="primary", use_container_width=True):
                 st.session_state.selected_scheme = scheme
+                st.session_state.prev_step = 4
                 st.session_state.step = 5
                 st.rerun()
         with btn_col2:
@@ -946,6 +999,8 @@ def render_results():
             web_results = fetch_new_schemes(build_backend_profile(), max_results=3)
             if web_results:
                 st.write("---")
+                if st.session_state.get("search_rate_limited"):
+                    st.warning(t("live_search_rate_limited"))
                 st.markdown("""
                 <div style="margin-top: 1rem; margin-bottom: 1rem;">
                     <h3 style="color: #0f172a; font-weight: 700;">🌐 Discover More Schemes</h3>
@@ -972,13 +1027,171 @@ def render_results():
     except Exception:
         pass  # Web search is optional — silently skip on any error
 
+def render_browse_schemes():
+    if st.button(t("btn_back")):
+        st.session_state.step = 1
+        st.rerun()
+
+    st.markdown(f"<h1 class='main-header'>{t('browse_schemes_title')}</h1>", unsafe_allow_html=True)
+    st.write("")
+
+    all_schemes = load_schemes_data()
+    
+    # 1. Search Bar
+    search_query = st.text_input(t("search_placeholder"), "")
+
+    # 2. Filters
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        categories = sorted(list(set(s.get("category", "") for s in all_schemes)))
+        category_options = [t("all_categories")] + [c.title() for c in categories]
+        selected_category = st.selectbox(t("filter_category"), category_options)
+        
+    with col_f2:
+        states = set()
+        for s in all_schemes:
+            for st_val in s.get("state", []):
+                if st_val != "all":
+                    states.add(st_val.title())
+        state_options = [t("all_states")] + sorted(list(states))
+        selected_state = st.selectbox(t("filter_state"), state_options)
+
+    with col_f3:
+        beneficiary_options = [
+            t("all_beneficiaries"),
+            t("beneficiary_student"),
+            t("beneficiary_farmer"),
+            t("beneficiary_women"),
+            t("beneficiary_senior"),
+            t("beneficiary_low_income")
+        ]
+        selected_beneficiary = st.selectbox(t("filter_beneficiary"), beneficiary_options)
+
+    # 3. Filtering Logic
+    filtered_schemes = []
+    for scheme in all_schemes:
+        # Search Query filter
+        if search_query and search_query.strip().lower() not in scheme.get("scheme_name", "").lower():
+            continue
+            
+        # Category filter
+        if selected_category != t("all_categories"):
+            if scheme.get("category", "").lower() != selected_category.lower():
+                continue
+                
+        # State/Central filter
+        if selected_state != t("all_states"):
+            scheme_states = [s_val.lower() for s_val in scheme.get("state", [])]
+            if "all" not in scheme_states and selected_state.lower() not in scheme_states:
+                continue
+                
+        # Beneficiary filter
+        if selected_beneficiary != t("all_beneficiaries"):
+            if selected_beneficiary == t("beneficiary_student"):
+                occupations = [o.lower() for o in scheme.get("occupation", [])]
+                if "student" not in occupations and "any" not in occupations:
+                    continue
+            elif selected_beneficiary == t("beneficiary_farmer"):
+                occupations = [o.lower() for o in scheme.get("occupation", [])]
+                if "farmer" not in occupations and "any" not in occupations:
+                    continue
+            elif selected_beneficiary == t("beneficiary_women"):
+                genders = [g.lower() for g in scheme.get("gender", [])]
+                if "female" not in genders and "any" not in genders:
+                    continue
+            elif selected_beneficiary == t("beneficiary_senior"):
+                if scheme.get("age_limit", {}).get("min", 0) < 60:
+                    continue
+            elif selected_beneficiary == t("beneficiary_low_income"):
+                if scheme.get("income_limit", 9999999) > 150000:
+                    continue
+                    
+        filtered_schemes.append(scheme)
+
+    # 4. Pagination
+    schemes_per_page = 5
+    total_filtered = len(filtered_schemes)
+    num_pages = math.ceil(total_filtered / schemes_per_page) if total_filtered > 0 else 1
+
+    if "browse_page" not in st.session_state:
+        st.session_state.browse_page = 1
+
+    # Reset page on filter change
+    filter_state_key = (search_query, selected_category, selected_state, selected_beneficiary)
+    if st.session_state.get("last_filter_state_key") != filter_state_key:
+        st.session_state.browse_page = 1
+        st.session_state.last_filter_state_key = filter_state_key
+
+    st.session_state.browse_page = max(1, min(st.session_state.browse_page, num_pages))
+
+    start_idx = (st.session_state.browse_page - 1) * schemes_per_page
+    end_idx = start_idx + schemes_per_page
+    page_schemes = filtered_schemes[start_idx:end_idx]
+
+    # 5. Display Scheme Cards
+    if not page_schemes:
+        st.info(t("no_schemes_found"))
+    else:
+        for i, scheme in enumerate(page_schemes):
+            states_list = scheme.get("state", [])
+            if "all" in [s.lower() for s in states_list]:
+                state_label = "Central / National"
+            else:
+                state_label = ", ".join([s.title() for s in states_list])
+                
+            req_docs_text = ", ".join([translate_explanation(x) for x in scheme.get('required_documents', [])])
+            
+            st.markdown(f"""
+            <div class="scheme-card">
+                <div style="display:flex; justify-content:space-between; align-items:start;">
+                    <span class="badge-partial">{state_label}</span>
+                    <span style="font-size:0.85rem; font-weight:600; background-color:#ccfbf1; color:#0f766e; padding:4px 8px; border-radius:8px;">{scheme.get('category', '').title()}</span>
+                </div>
+                <h3 style="color:#0f172a; margin-top:0.75rem; font-weight:800; font-size:1.35rem; margin-bottom:0.5rem;">{scheme.get('scheme_name', '')}</h3>
+                <p style="color:#475569; font-size:1rem; line-height:1.5; margin-bottom:1rem;">{translate_explanation(scheme.get('benefit_summary', ''))}</p>
+                <div style="background-color:#f8fafc; border-radius:12px; padding:1rem; border:1px solid #f1f5f9; margin-bottom:1rem;">
+                    <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0.5rem;"><b>{t('eligibility')}</b> {translate_explanation(scheme.get('eligibility_criteria', ''))}</p>
+                    <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0;"><b>{t('req_docs')}</b> {req_docs_text}</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                # view detail button, save origin step
+                if st.button(t("btn_view_details"), key=f"browse_view_{i}", type="primary", use_container_width=True):
+                    st.session_state.selected_scheme = scheme
+                    st.session_state.prev_step = 8
+                    st.session_state.step = 5
+                    st.rerun()
+            with btn_col2:
+                apply_link = scheme.get("official_apply_link", "")
+                st.link_button(t("btn_apply"), apply_link if apply_link else "#", use_container_width=True)
+            st.write("")
+
+        # 6. Pagination Controls
+        st.write("---")
+        pag_col1, pag_col2, pag_col3 = st.columns([1, 2, 1])
+        with pag_col1:
+            if st.button(t("prev_page"), disabled=(st.session_state.browse_page == 1), use_container_width=True):
+                st.session_state.browse_page -= 1
+                st.rerun()
+        with pag_col2:
+            st.markdown(f"<p style='text-align: center; font-weight: 600; line-height: 2.2;'>{t('page')} {st.session_state.browse_page} / {num_pages} ({total_filtered} total)</p>", unsafe_allow_html=True)
+        with pag_col3:
+            if st.button(t("next_page"), disabled=(st.session_state.browse_page == num_pages), use_container_width=True):
+                st.session_state.browse_page += 1
+                st.rerun()
+
 def render_detail():
     scheme = st.session_state.get("selected_scheme")
     if not scheme:
         st.warning(t("warn_no_schemes"))
         return
+    
+    back_step = st.session_state.get("prev_step", 4)
     if st.button(t("btn_back_results")):
-        st.session_state.step = 4
+        st.session_state.step = back_step
         st.rerun()
         
     raw_status = scheme.get("match_status", "No Match")
@@ -986,7 +1199,11 @@ def render_detail():
     status = t(status_key)
         
     st.markdown(f"<h2 style='color:#0f172a; font-weight:800; margin-bottom:0.5rem;'>{scheme.get('scheme_name', '')}</h2>", unsafe_allow_html=True)
-    st.markdown(f"<span class='badge-eligible' style='margin-bottom:2rem;'>{status} - {scheme.get('match_score', 0)}% Match</span>", unsafe_allow_html=True)
+    if "match_score" in scheme:
+        st.markdown(f"<span class='badge-eligible' style='margin-bottom:2rem;'>{status} - {scheme.get('match_score', 0)}% Match</span>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<span class='badge-eligible' style='margin-bottom:2rem;'>📁 {t('browse_mode')}</span>", unsafe_allow_html=True)
+        
     col1, col2 = st.columns([2, 1.2])
     with col1:
         st.markdown(f"<h3 style='color:#1e293b; font-weight:700;'>{t('overview')}</h3>", unsafe_allow_html=True)
@@ -994,11 +1211,15 @@ def render_detail():
         st.write("")
         st.markdown(f"<h3 style='color:#1e293b; font-weight:700;'>{t('who_can_apply')}</h3>", unsafe_allow_html=True)
         
-        matched_list = [translate_explanation(x) for x in scheme.get("why_matched", [])]
-        not_matched_list = [translate_explanation(x) for x in scheme.get("why_not_matched", [])]
-        
-        matched = "<br>".join([f"• {x}" for x in matched_list]) or t("reason_no_pos")
-        not_matched = "<br>".join([f"• {x}" for x in not_matched_list]) or t("reason_no_neg")
+        if "match_score" in scheme:
+            matched_list = [translate_explanation(x) for x in scheme.get("why_matched", [])]
+            not_matched_list = [translate_explanation(x) for x in scheme.get("why_not_matched", [])]
+            
+            matched = "<br>".join([f"• {x}" for x in matched_list]) or t("reason_no_pos")
+            not_matched = "<br>".join([f"• {x}" for x in not_matched_list]) or t("reason_no_neg")
+        else:
+            matched = f"• {translate_explanation(scheme.get('eligibility_criteria', ''))}"
+            not_matched = translate_explanation(t("reason_browse_mode"))
         
         st.markdown(f"<p style='color:#475569; line-height:1.7;'><strong>{t('matched')}</strong><br>{matched}</p>", unsafe_allow_html=True)
         st.markdown(f"<p style='color:#b45309; line-height:1.7;'><strong>{t('not_matched')}</strong><br>{not_matched}</p>", unsafe_allow_html=True)
@@ -1652,6 +1873,8 @@ def main():
         render_no_match()
     elif st.session_state.step == 7:
         render_nearest_centers()
+    elif st.session_state.step == 8:
+        render_browse_schemes()
 
 if __name__ == "__main__":
     main()

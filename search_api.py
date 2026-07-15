@@ -18,9 +18,11 @@ AI Concepts:
 
 import os
 import logging
+import json
 from typing import List, Dict, Any, Optional
 
 import requests
+from api_utils import execute_with_retry_and_backoff, get_cached_response, cache_response
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,42 @@ def _build_search_query(profile: Dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _make_search_request(url: str, params: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+    """Helper to perform HTTP search request and raise for errors."""
+    response = requests.get(url, params=params, timeout=timeout)
+    response.raise_for_status()
+    return response.json()
+
+
+def _get_local_fallback_recommendations(profile: Dict[str, Any], max_results: int) -> List[Dict[str, Any]]:
+    """Retrieve recommendations from local schemes.json if search API is rate-limited."""
+    try:
+        from logic import get_top_matches
+        
+        # Load local schemes
+        schemes_path = os.path.join(os.path.dirname(__file__), "schemes.json")
+        with open(schemes_path, "r", encoding="utf-8") as f:
+            schemes_data = json.load(f)
+            
+        # Get top matches using local rule-based + semantic pipeline
+        # Pass empty user_text to skip any external API calls inside semantic retrieval
+        results = get_top_matches(profile, schemes_data, top_n=max_results, user_text="")
+        
+        fallback_results = []
+        for r in results:
+            fallback_results.append({
+                "title": r.get("scheme_name", ""),
+                "snippet": r.get("benefit_summary", "") or r.get("category", ""),
+                "link": r.get("official_apply_link", "#"),
+                "source": "Local Database"
+            })
+        logger.info(f"Generated {len(fallback_results)} local fallback recommendations.")
+        return fallback_results
+    except Exception as e:
+        logger.warning(f"Failed to generate local search fallback recommendations: {e}")
+        return []
+
+
 def fetch_new_schemes(
     profile: Dict[str, Any],
     max_results: int = 5,
@@ -101,6 +139,21 @@ def fetch_new_schemes(
         List of dicts with 'title', 'snippet', 'link' for each result.
         Returns empty list if the API is not configured or the call fails.
     """
+    # 1. Check cache first to avoid duplicate requests
+    cached = get_cached_response("fetch_new_schemes", profile, max_results)
+    if cached is not None:
+        logger.info("Serving search results from cache.")
+        return cached
+
+    # 2. Check if currently marked as rate-limited to avoid spamming the API
+    try:
+        import streamlit as st
+        if hasattr(st, "session_state") and st.session_state.get("search_rate_limited", False):
+            logger.info("Search API is currently rate-limited. Skipping API call and using local fallback.")
+            return _get_local_fallback_recommendations(profile, max_results)
+    except Exception:
+        pass
+
     api_key, cx = _get_search_credentials()
     if not api_key or not cx:
         logger.info("Google Search API not configured. Skipping web search.")
@@ -108,21 +161,25 @@ def fetch_new_schemes(
 
     query = _build_search_query(profile)
 
-    try:
-        url = "https://www.googleapis.com/customsearch/v1"
-        params = {
-            "key": api_key,
-            "cx": cx,
-            "q": query,
-            "num": min(max_results, 10),  # API max is 10 per request
-            "dateRestrict": "y1",  # Results from last 1 year
-            "lr": "lang_en",
-            "safe": "active"
-        }
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": api_key,
+        "cx": cx,
+        "q": query,
+        "num": min(max_results, 10),  # API max is 10 per request
+        "dateRestrict": "y1",  # Results from last 1 year
+        "lr": "lang_en",
+        "safe": "active"
+    }
 
-        response = requests.get(url, params=params, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
+    try:
+        # 3. Call search API with retry and backoff wrapper
+        data = execute_with_retry_and_backoff(
+            _make_search_request,
+            args=(url, params, timeout),
+            kwargs={},
+            api_name="Google Search API"
+        )
 
         results = []
         for item in data.get("items", []):
@@ -134,18 +191,32 @@ def fetch_new_schemes(
             })
 
         logger.info(f"Web search returned {len(results)} results for query: {query[:80]}...")
+        
+        # 4. Cache successful responses
+        cache_response("fetch_new_schemes", results, profile, max_results)
         return results
 
-    except requests.exceptions.Timeout:
-        logger.warning("Google Search API timed out.")
-    except requests.exceptions.HTTPError as e:
-        logger.warning(f"Google Search API HTTP error: {e}")
-    except requests.exceptions.ConnectionError:
-        logger.warning("Google Search API connection failed (no internet?).")
     except Exception as e:
-        logger.warning(f"Google Search API unexpected error: {e}")
+        is_rate_limit = False
+        error_msg = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            if getattr(e.response, 'status_code', None) == 429:
+                is_rate_limit = True
+        elif "429" in error_msg:
+            is_rate_limit = True
 
-    return []
+        if is_rate_limit:
+            logger.error("Google Search API rate limit exceeded. Falling back to local schemes.json database.")
+            try:
+                import streamlit as st
+                if hasattr(st, "session_state"):
+                    st.session_state.search_rate_limited = True
+            except Exception:
+                pass
+            return _get_local_fallback_recommendations(profile, max_results)
+        else:
+            logger.warning(f"Google Search API call failed with error: {e}")
+            return []
 
 
 def is_available() -> bool:

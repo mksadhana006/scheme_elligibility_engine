@@ -17,7 +17,9 @@ AI Concepts:
 import os
 import json
 import logging
+import copy
 from typing import List, Dict, Any, Optional
+from api_utils import execute_with_retry_and_backoff, get_cached_response, cache_response
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +165,18 @@ RESPOND WITH ONLY a valid JSON array, no other text:
     return prompt
 
 
+def _call_gemini_api(model, prompt) -> Any:
+    """Helper to perform the Gemini content generation call."""
+    return model.generate_content(
+        prompt,
+        generation_config={
+            "temperature": 0.1,  # Low temperature for consistent scoring
+            "max_output_tokens": 2048,
+            "response_mime_type": "application/json"
+        }
+    )
+
+
 def rerank_schemes(
     profile: Dict[str, Any],
     candidates: List[Dict[str, Any]],
@@ -180,7 +194,25 @@ def rerank_schemes(
         The same candidates list, enriched with 'llm_score' and 'llm_explanation' fields.
         If the LLM call fails, returns candidates with default llm_score of 50.
     """
-    # Graceful fallback: if no model available, return candidates with default scores
+    # 1. Check cache first
+    cached = get_cached_response("rerank_schemes", profile, candidates)
+    if cached is not None:
+        logger.info("Serving LLM re-ranking from cache.")
+        return copy.deepcopy(cached)
+
+    # 2. Check if currently marked as rate-limited to avoid API spam
+    try:
+        import streamlit as st
+        if hasattr(st, "session_state") and st.session_state.get("ai_rate_limited", False):
+            logger.info("Gemini AI API is currently rate-limited. Skipping API call and using local fallback (default scores).")
+            for candidate in candidates:
+                candidate["llm_score"] = 50
+                candidate["llm_explanation"] = "LLM re-ranking unavailable"
+            return candidates
+    except Exception:
+        pass
+
+    # 3. Get model instance
     model = _get_model()
     if model is None:
         logger.info("LLM re-ranking skipped (no API key or model unavailable).")
@@ -192,14 +224,12 @@ def rerank_schemes(
     try:
         prompt = _build_prompt(profile, candidates)
 
-        # Call Gemini with safety settings relaxed for factual content
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.1,  # Low temperature for consistent scoring
-                "max_output_tokens": 2048,
-                "response_mime_type": "application/json"
-            }
+        # 4. Call Gemini with retry & exponential backoff wrapper
+        response = execute_with_retry_and_backoff(
+            _call_gemini_api,
+            args=(model, prompt),
+            kwargs={},
+            api_name="Gemini AI API"
         )
 
         # Parse the JSON response
@@ -230,12 +260,28 @@ def rerank_schemes(
                 candidate["llm_explanation"] = "Not evaluated by LLM"
 
         logger.info(f"LLM re-ranking completed for {len(candidates)} candidates.")
+        
+        # 5. Cache successful responses
+        cache_response("rerank_schemes", candidates, profile, candidates)
         return candidates
 
-    except json.JSONDecodeError as e:
-        logger.warning(f"LLM response was not valid JSON: {e}")
     except Exception as e:
-        logger.warning(f"LLM re-ranking failed: {e}")
+        is_rate_limit = False
+        error_msg = str(e)
+        exc_type_name = type(e).__name__
+        if any(term in exc_type_name for term in ["ResourceExhausted", "TooManyRequests", "QuotaExceeded"]) or "429" in error_msg:
+            is_rate_limit = True
+
+        if is_rate_limit:
+            logger.error("Gemini AI API rate limit exceeded. Falling back to local default scores.")
+            try:
+                import streamlit as st
+                if hasattr(st, "session_state"):
+                    st.session_state.ai_rate_limited = True
+            except Exception:
+                pass
+        else:
+            logger.warning(f"LLM re-ranking failed with error: {e}")
 
     # Fallback: set default scores
     for candidate in candidates:
