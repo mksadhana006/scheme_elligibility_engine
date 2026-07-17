@@ -46,6 +46,20 @@ def normalize_profile(profile):
             else:
                 p[k] = v
                 
+    # Normalize state
+    if 'state' in p and p['state']:
+        state_str = str(p['state']).lower().strip()
+        if state_str in ["tamil nadu", "tamilnadu", "tn"]:
+            p['state'] = "tamil nadu"
+        elif state_str in ["bihar"]:
+            p['state'] = "bihar"
+        elif state_str in ["maharashtra"]:
+            p['state'] = "maharashtra"
+        elif state_str in ["uttar pradesh", "up"]:
+            p['state'] = "uttar pradesh"
+        else:
+            p['state'] = state_str
+                
     # Normalize income
     if 'income' in p and p['income']:
         try:
@@ -171,7 +185,7 @@ def calculate_rule_score(profile, scheme):
         if profile.get('gender'):
             if profile['gender'] in scheme_gender:
                 matched_conditions += 1
-                why_matched.append(f"Gender matches ({profile['gender'].capitalize()})")
+                why_matched.append("Your gender matches")
             else:
                 why_not_matched.append(f"Requires gender: {', '.join(scheme_gender).capitalize()}")
                 # Gender is a hard block for gender-specific schemes
@@ -186,7 +200,10 @@ def calculate_rule_score(profile, scheme):
         if profile.get('marital_status'):
             if profile['marital_status'] in scheme_marital:
                 matched_conditions += 1
-                why_matched.append(f"Marital status matches ({profile['marital_status'].capitalize()})")
+                if profile['marital_status'] == 'widow':
+                    why_matched.append("You are widowed")
+                else:
+                    why_matched.append("Your marital status matches")
             else:
                 why_not_matched.append(f"Requires marital status: {', '.join(scheme_marital).capitalize()}")
                 # Marital status is a hard block for marital-specific schemes (e.g., widow pension)
@@ -201,7 +218,7 @@ def calculate_rule_score(profile, scheme):
         if profile.get('state'):
             if profile['state'] in scheme_state:
                 matched_conditions += 1
-                why_matched.append(f"Resident of eligible state ({profile['state'].capitalize()})")
+                why_matched.append(f"You are from {profile['state'].title()}")
             else:
                 why_not_matched.append(f"Requires residence in: {', '.join([s.capitalize() for s in scheme_state])}")
                 # State mismatch is a soft penalty — many schemes have expanded coverage
@@ -217,7 +234,7 @@ def calculate_rule_score(profile, scheme):
         if profile.get('age') is not None:
             if min_age <= profile['age'] <= max_age:
                 matched_conditions += 1
-                why_matched.append(f"Age {profile['age']} is within eligible range ({min_age}-{max_age} yrs)")
+                why_matched.append("Your age falls within the eligible range")
             else:
                 why_not_matched.append(f"Age must be between {min_age} and {max_age} years")
                 # Age outside range is a hard block
@@ -232,7 +249,7 @@ def calculate_rule_score(profile, scheme):
         if profile.get('income') is not None:
             if profile['income'] <= max_income:
                 matched_conditions += 1
-                why_matched.append(f"Income ₹{profile['income']:,.0f} is within limit (Max ₹{max_income:,.0f})")
+                why_matched.append("Your income satisfies eligibility")
             else:
                 why_not_matched.append(f"Income exceeds the maximum limit of ₹{max_income:,.0f}")
                 # Income over limit is NOT always a hard block — some schemes have flexibility
@@ -246,7 +263,15 @@ def calculate_rule_score(profile, scheme):
         if profile.get('occupation'):
             if profile['occupation'] in scheme_occupation:
                 matched_conditions += 1
-                why_matched.append(f"Occupation ({profile['occupation'].capitalize()}) is eligible")
+                if profile['occupation'] == 'student':
+                    raw_txt = str(profile.get('raw_text', '')).lower()
+                    if 'college' in raw_txt or 'university' in raw_txt or 'degree' in raw_txt or 'college' in str(scheme.get('match_keywords', [])) or 'college' in scheme.get('scheme_name', '').lower():
+                        why_matched.append("You are a college student")
+                    else:
+                        why_matched.append("You are a student")
+                    why_matched.append("Your education level matches")
+                else:
+                    why_matched.append(f"You are a {profile['occupation']}")
             else:
                 why_not_matched.append(f"Occupation must be one of: {', '.join(scheme_occupation).capitalize()}")
                 # Occupation mismatch is a soft penalty

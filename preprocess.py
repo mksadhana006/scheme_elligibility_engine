@@ -87,7 +87,7 @@ def detect_language(text: str) -> str:
     hinglish_words = ["hai", "mera", "meri", "aur", "vidhva", "mahila", "umar", "kya", "nahi", "nhi", "saal", "aadmi"]
     words = set(re.findall(r'\b\w+\b', text.lower()))
     if any(hw in words for hw in hinglish_words) or any('\u0900' <= c <= '\u097F' for c in text):
-        return "Hinglish"
+        return "Hindi"
         
     return "English"
 

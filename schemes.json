@@ -498,5 +498,55 @@
             "labourer"
         ],
         "priority_score": 80
+    },
+    {
+        "scheme_name": "Naan Mudhalvan Thittam",
+        "category": "education",
+        "state": [
+            "tamil nadu"
+        ],
+        "eligibility_criteria": "Must be a resident of Tamil Nadu, studying in school or college, or a youth seeking skill development.",
+        "required_documents": [
+            "Aadhaar Card",
+            "Domicile Certificate of Tamil Nadu",
+            "Student ID Card or Educational Certificates"
+        ],
+        "benefit_summary": "Access to free skill development training, career counseling, and academic courses.",
+        "application_steps": [
+            "Visit the official Naan Mudhalvan portal.",
+            "Register using Aadhaar and mobile number.",
+            "Choose your desired course and college/district.",
+            "Enroll in the training program."
+        ],
+        "official_apply_link": "https://www.naanmudhalvan.tn.gov.in/",
+        "match_keywords": [
+            "student",
+            "college",
+            "education",
+            "skill",
+            "training",
+            "tamil nadu",
+            "tamilnadu",
+            "tn",
+            "career"
+        ],
+        "income_limit": 1000000,
+        "age_limit": {
+            "min": 15,
+            "max": 35
+        },
+        "gender": [
+            "male",
+            "female",
+            "other"
+        ],
+        "marital_status": [
+            "any"
+        ],
+        "occupation": [
+            "student",
+            "unemployed"
+        ],
+        "priority_score": 95
     }
 ]
