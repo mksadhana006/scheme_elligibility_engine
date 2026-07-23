@@ -1,5 +1,5 @@
 {
-  "num_schemes": 11,
+  "num_schemes": 12,
   "dimension": 384,
   "scheme_texts": [
     "Indira Gandhi National Widow Pension Scheme (IGNWPS). Category: widow pension. Must be a widow aged 40 or above, living below the poverty line.. Financial assistance of ₹300/month (varies by state) to widows below the poverty line.. Keywords: widow, pension, death, bpl, female. Target: For female. Marital status: widow. Income limit: Rs 100000. Age: 40-120 years",
@@ -12,7 +12,8 @@
     "Deendayal Disabled Rehabilitation Scheme (DDRS). Category: disability. Persons with disabilities needing rehabilitation services.. Financial assistance provided through NGOs for education, vocational training, and rehabilitation of disabled persons.. Keywords: disabled, handicap, rehabilitation, special needs, divyang. Target: For male, female, other. Income limit: Rs 300000",
     "Bihar State Widow Pension Scheme. Category: state pension. Widows residing in Bihar aged 18 or above, with annual income below ₹60,000.. Monthly pension for widows residing in Bihar.. Keywords: widow, pension, bihar, state, female. Target: For female. Marital status: widow. State: bihar. Income limit: Rs 60000. Age: 18-120 years",
     "Mukhyamantri Mahila Rojgar Yojana. Category: women welfare. Women aged 18-50 residing in Maharashtra, Bihar, or Uttar Pradesh with annual income below ₹2,00,000.. Financial assistance and subsidized loans for women to start micro-enterprises.. Keywords: women, loan, employment, business, subsidy. Target: For female. State: maharashtra, bihar, uttar pradesh. Income limit: Rs 200000. Age: 18-50 years",
-    "e-Shram Support. Category: employment. Unorganized workers, farmers, or unemployed individuals aged 16-59.. Accidental insurance cover of ₹2 Lakhs under PMSBY and social security benefits.. Keywords: worker, unorganized, insurance, accident, unemployed. Target: For male, female, other. Occupation: unorganized, worker, farmer, unemployed, labourer. Income limit: Rs 1000000. Age: 16-59 years"
+    "e-Shram Support. Category: employment. Unorganized workers, farmers, or unemployed individuals aged 16-59.. Accidental insurance cover of ₹2 Lakhs under PMSBY and social security benefits.. Keywords: worker, unorganized, insurance, accident, unemployed. Target: For male, female, other. Occupation: unorganized, worker, farmer, unemployed, labourer. Income limit: Rs 1000000. Age: 16-59 years",
+    "Naan Mudhalvan Thittam. Category: education. Must be a resident of Tamil Nadu, studying in school or college, or a youth seeking skill development.. Access to free skill development training, career counseling, and academic courses.. Keywords: student, college, education, skill, training, tamil nadu, tamilnadu, tn, career. Target: For male, female, other. Occupation: student, unemployed. State: tamil nadu. Income limit: Rs 1000000. Age: 15-35 years"
   ],
   "scheme_names": [
     "Indira Gandhi National Widow Pension Scheme (IGNWPS)",
@@ -25,6 +26,7 @@
     "Deendayal Disabled Rehabilitation Scheme (DDRS)",
     "Bihar State Widow Pension Scheme",
     "Mukhyamantri Mahila Rojgar Yojana",
-    "e-Shram Support"
+    "e-Shram Support",
+    "Naan Mudhalvan Thittam"
   ]
 }

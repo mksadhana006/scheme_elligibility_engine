@@ -5,6 +5,7 @@ import streamlit.components.v1 as components
 import time
 import re
 import requests
+import osm_api
 from logic import get_top_matches, normalize_profile
 from preprocess import build_profile
 
@@ -1736,16 +1737,7 @@ def render_nearest_centers():
 
     # Nominatim Reverse Geocoding
     if "address_dict" not in st.session_state or st.session_state.get("last_geo_lat") != user_lat:
-        try:
-            headers = {'User-Agent': 'AdhikaarSchemeEngine/1.0'}
-            resp = requests.get(f"https://nominatim.openstreetmap.org/reverse?format=json&lat={user_lat}&lon={user_lng}", headers=headers, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                st.session_state.address_dict = data.get("address", {})
-            else:
-                st.session_state.address_dict = {}
-        except Exception:
-            st.session_state.address_dict = {}
+        st.session_state.address_dict = osm_api.get_address_from_coords(user_lat, user_lng)
         st.session_state.last_geo_lat = user_lat
 
     addr = st.session_state.get("address_dict", {})
@@ -1767,22 +1759,30 @@ def render_nearest_centers():
     elif parts or parts2:
         loc_display = f"{', '.join(parts) if parts else ', '.join(parts2)}"
     else:
-        loc_display = "Location detected<br>Unable to determine city/state"
+        # Fallback to formatted full address if specific parts are missing
+        formatted = osm_api.get_formatted_address_from_coords(user_lat, user_lng)
+        loc_display = formatted.replace(", ", "<br>", 1) if ", " in formatted else formatted
 
     if loc_source != "gps" and loc_source != "GPS":
         loc_display = f"{loc_source}"
 
-    for center in APPLICATION_CENTERS:
-        center["distance"] = haversine_distance(user_lat, user_lng, center["lat"], center["lng"])
-        
-    sorted_centers = sorted(APPLICATION_CENTERS, key=lambda x: x["distance"])
+    user_state = addr.get("state", "Other")
+    rec_type = get_recommended_center_type(scheme, user_state)
+
+    # Fetch nearest centres via Overpass API with fallback
+    nearby_centers = osm_api.find_nearby_centres(user_lat, user_lng, center_type=rec_type)
     
-    MAX_DISTANCE_KM = 500.0
-    nearby_centers = [c for c in sorted_centers if c["distance"] <= MAX_DISTANCE_KM]
+    if not nearby_centers:
+        st.info("Using local dataset for nearby application centres as online search is currently unavailable.")
+        for center in APPLICATION_CENTERS:
+            center["distance"] = osm_api.haversine_distance(user_lat, user_lng, center["lat"], center["lng"])
+        sorted_centers = sorted(APPLICATION_CENTERS, key=lambda x: x["distance"])
+        MAX_DISTANCE_KM = 500.0
+        nearby_centers = [c for c in sorted_centers if c["distance"] <= MAX_DISTANCE_KM]
     
     if not nearby_centers:
         st.write("")
-        st.warning("No nearby application center found.")
+        st.warning(f"No {rec_type} found nearby.")
         col_back, _ = st.columns([1, 1])
         with col_back:
             if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_no_centers"):
@@ -1791,7 +1791,6 @@ def render_nearest_centers():
         return
         
     nearest = nearby_centers[0]
-    rec_type = get_recommended_center_type(scheme, nearest.get("state", "Other"))
     dist_val = nearest['distance']
     
     st.markdown(f"""
@@ -1872,7 +1871,7 @@ def render_nearest_centers():
         </div>
         <div style="color: #475569; font-size: 0.9rem; margin: 0.5rem 0 0.5rem 0; line-height: 1.4;">
             <b>{c['name']}</b><br>
-            <b>Address:</b><br>{c['address']}
+            <b>Address:</b><br>{c.get('address', 'Address not available')}
         </div>
         <div style="color: #64748b; font-size: 0.85rem; margin: 0.25rem 0 1rem 0;">
             📞 <b>Phone:</b> {c.get('phone', 'N/A')}
