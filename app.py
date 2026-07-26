@@ -1135,7 +1135,10 @@ def render_browse_schemes():
         with st.spinner("Analyzing with Gemini..."):
             try:
                 # Use Gemini dynamically here
-                from scheme_elligibility_engine.api_utils import generate_content_with_cascade
+                try:
+                    from api_utils import generate_content_with_cascade
+                except ImportError:
+                    from scheme_elligibility_engine.api_utils import generate_content_with_cascade
                 prompt = f"""You are an AI expert on Government of India schemes.
                 Provide a list of up to 5 government schemes matching the user's query: "{active_query}".
                 Respond only with a JSON object:
