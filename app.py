@@ -1,4 +1,3 @@
-from scheme_elligibility_engine import api_utils
 import json
 import math
 import os
@@ -12,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 from logic import get_top_matches, normalize_profile
 from preprocess import build_profile
-from centers_db import fetch_nearby_places_local, geocode_address_free, fallback_text_search, haversine_distance, fetch_places_new
+from centers_db import geocode_address_free, fetch_places_new
 
 def transliterate_to_tamil(text):
     try:
@@ -61,14 +60,14 @@ TEXTS = {
         "btn_browse_schemes": "Browse Schemes",
         "voice_enabled": "🎙️ Multilingual Voice Input Enabled",
         "how_it_works": "How it works",
-        "step1_title": "Tell us about yourself",
+        "step1_title": "Tell us about yoursel",
         "step1_desc": "Type naturally or use your voice in your preferred language about your current situation.",
         "step2_title": "We check matching schemes",
         "step2_desc": "Our smart engine transparently matches your details against government scheme rules.",
         "step3_title": "View eligible schemes & apply",
         "step3_desc": "Get a clear list of what you qualify for and exactly which documents you need to apply.",
         "btn_back": "← Back",
-        "input_title": "Tell us about yourself",
+        "input_title": "Tell us about yoursel",
         "input_desc": "Type naturally in English, தமிழ், or Hindi. Or use voice input below.",
         "quick_tags": "Quick Select Tags:",
         "btn_continue": "Continue to Match",
@@ -150,7 +149,7 @@ TEXTS = {
         "ai_rate_limited": "AI re-ranking is temporarily unavailable. Showing recommendations from the local database.",
         "browse_schemes_title": "Browse Schemes",
         "search_placeholder": "Search schemes by name...",
-        "filter_category": "Category:",
+        "filter_category_short": "Category:",
         "filter_state": "State/Central:",
         "filter_beneficiary": "Beneficiary:",
         "all_categories": "All Categories",
@@ -269,7 +268,7 @@ TEXTS = {
         "ai_rate_limited": "AI மறுவரிசைப்படுத்தல் தற்காலிகமாக கிடைக்கவில்லை. உள்ளூர் தரவுத்தளத்திலிருந்து பரிந்துரைகள் காட்டப்படுகின்றன.",
         "browse_schemes_title": "திட்டங்களை உலாவுக",
         "search_placeholder": "திட்டத்தின் பெயரைத் தேடுங்கள்...",
-        "filter_category": "வகை:",
+        "filter_category_short": "வகை:",
         "filter_state": "மாநிலம்/மத்திய:",
         "filter_beneficiary": "பயனாளி:",
         "all_categories": "அனைத்து பிரிவுகளும்",
@@ -347,7 +346,7 @@ def translate_explanation(text):
         "Income exceeds the maximum limit": "வருமானம் அதிகபட்ச வரம்பை மீறுகிறது",
         "Occupation": "தொழில்",
         "is eligible": "தகுதி உள்ளது",
-        "Occupation must be one of": "தொழில் இவற்றில் ஒன்றாக இருக்க வேண்டும்",
+        "Occupation must be one o": "தொழில் இவற்றில் ஒன்றாக இருக்க வேண்டும்",
         "Missing information: Please provide your": "விடுபட்ட தகவல்: தயவுசெய்து உங்கள் தகவலை வழங்கவும்",
         "Full Match": "முழுமையான பொருத்தம்",
         "Partial Match": "பகுதி பொருத்தம்",
@@ -1295,7 +1294,7 @@ def render_detail():
             
             # Render Geolocation request HTML/JS if we are requesting via GPS
             if st.session_state.geo_state == "requesting":
-                geo_html = f"""
+                geo_html = """
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -1763,7 +1762,7 @@ APPLICATION_CENTERS = [
     }
 ]
 
-def haversine_distance(lat1, lon1, lat2, lon2):
+def _unused_haversine_distance(lat1, lon1, lat2, lon2):
     R = 6371.0 # Radius of the earth in km
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
@@ -1802,7 +1801,6 @@ def get_recommended_center_type(scheme, state):
 
 def geocode_address(address):
     import os
-    import requests
     import logging
     from dotenv import load_dotenv
     load_dotenv()
@@ -1885,7 +1883,6 @@ def fetch_nearby_places(lat, lng, radius=5000):
         raise Exception(f"Network error while connecting to Google Places API: {str(e)}")
 
 def render_nearest_centers():
-    import requests
     scheme = st.session_state.get("selected_scheme")
     profile_state = st.session_state.profile.get("State")
     if not profile_state or profile_state not in STATE_CITIES:
@@ -1971,7 +1968,7 @@ def render_nearest_centers():
             st.rerun()
 
     if st.session_state.geo_state == "requesting" and not st.session_state.manual_location_mode:
-        geo_html = f"""
+        geo_html = """
         <!DOCTYPE html>
         <html>
         <head>
@@ -2138,7 +2135,7 @@ def render_nearest_centers():
 
     user_lat = st.session_state.get("user_lat")
     user_lng = st.session_state.get("user_lng")
-    loc_source = st.session_state.get("location_source", "GPS")
+    # noqa: F841 loc_source = st.session_state.get("location_source", "GPS")
     
     if user_lat is None or user_lng is None:
         return
@@ -2149,9 +2146,9 @@ def render_nearest_centers():
         st.session_state.last_geo_lat = user_lat
 
     addr = st.session_state.get("address_dict", {})
-    area = addr.get("suburb", addr.get("neighbourhood", addr.get("road", "")))
-    city = addr.get("city", addr.get("town", addr.get("village", "")))
-    district = addr.get("state_district", addr.get("county", ""))
+    # noqa: F841 area = addr.get("suburb", addr.get("neighbourhood", addr.get("road", "")))
+    # noqa: F841 city = addr.get("city", addr.get("town", addr.get("village", "")))
+    # noqa: F841 district = addr.get("state_district", addr.get("county", ""))
     state = addr.get("state", "")
     
     # Retrieve the custom query entered by the user
@@ -2197,7 +2194,7 @@ def render_nearest_centers():
             # Highlight nearest center
             bg_style = "background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 2px solid #059669; box-shadow: 0 10px 15px -3px rgba(5, 150, 105, 0.1);"
             badge_html = "<span style='color:#059669; font-weight:700; font-size:0.9rem; background:#d1fae5; padding:4px 8px; border-radius:8px; display:inline-block; margin-bottom: 0.5rem;'>⭐ Nearest Center</span>"
-            st.markdown(f"<h3 style='color:#0f172a; font-weight:800; margin-bottom:1rem;'>🏢 Nearest Application Center</h3>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color:#0f172a; font-weight:800; margin-bottom:1rem;'>🏢 Nearest Application Center</h3>", unsafe_allow_html=True)
         else:
             if idx == 1:
                 st.markdown(f"<h3 style='color:#1e293b; font-weight:800; margin-top:2rem; margin-bottom:1rem;'>📍 Other Nearby Centers (within {radius_km} km)</h3>", unsafe_allow_html=True)
