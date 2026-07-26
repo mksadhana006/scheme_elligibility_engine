@@ -185,8 +185,15 @@ def generate_content_with_cascade(
     ]
     last_err = None
     
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+        
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if api_key:
+        os.environ["GOOGLE_API_KEY"] = api_key
         genai.configure(api_key=api_key, transport="rest")
         
     for model_name in models:

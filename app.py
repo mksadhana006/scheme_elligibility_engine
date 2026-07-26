@@ -982,44 +982,9 @@ def render_processing():
                 st.session_state.search_rate_limited = False
                 st.session_state.ai_rate_limited = False
                 
-                # Fetch schemes dynamically from Tavily and Gemini
-                dynamic_schemes = []
-                try:
-                    from dynamic_retriever import fetch_schemes_dynamically
-                    dynamic_schemes = fetch_schemes_dynamically(
-                        normalized_profile,
-                        user_text=st.session_state.user_input,
-                        max_results=5
-                    )
-                except Exception as e:
-                    st.error(f"Error fetching schemes online: {e}")
-                    logger.error(f"Error in dynamic retrieval: {e}")
-                
-                # Combine dynamic search results and local database schemes as Gemini's source
-                local_schemes = load_schemes_data()
-                
-                # Deduplicate candidate schemes by scheme_name (case-insensitive)
-                candidate_names = set()
-                schemes_data = []
-                
-                # Add dynamic schemes first (prefer live search results)
-                for s in dynamic_schemes:
-                    name = s.get("scheme_name", "").strip().lower()
-                    if name and name not in candidate_names:
-                        candidate_names.add(name)
-                        schemes_data.append(s)
-                        
-                # Add local schemes
-                for s in local_schemes:
-                    name = s.get("scheme_name", "").strip().lower()
-                    if name and name not in candidate_names:
-                        candidate_names.add(name)
-                        schemes_data.append(s)
-                
                 try:
                     results = get_top_matches(
                         normalized_profile,
-                        schemes_data,
                         top_n=15,
                         user_text=st.session_state.user_input
                     )
@@ -1157,189 +1122,69 @@ def render_browse_schemes():
     st.markdown(f"<h1 class='main-header'>{t('browse_schemes_title')}</h1>", unsafe_allow_html=True)
     st.write("")
 
-    # Toggle between live AI-grounded search and local schemes database
-    use_live_search = st.toggle("🔍 Search live official government portals using AI (grounded on gov.in)", value=True, key="browse_use_live_search")
-    
-    if use_live_search:
-        # Search Bar for live search
-        search_query = st.text_input("Search current government schemes (e.g. 'farmer schemes', 'subsidies'):", value=st.session_state.get("browse_search_query", ""), placeholder="Type query and click search...")
-        if st.button("Search Web-grounded Schemes", type="primary", use_container_width=True):
-            if search_query.strip():
-                st.session_state.browse_search_query = search_query
-                st.rerun()
-            else:
-                st.warning("Please enter a search query.")
+    search_query = st.text_input("Search current government schemes (e.g. 'farmer schemes', 'subsidies'):", value=st.session_state.get("browse_search_query", ""), placeholder="Type query and click search...")
+    if st.button("Search Web-grounded Schemes", type="primary", use_container_width=True):
+        if search_query.strip():
+            st.session_state.browse_search_query = search_query
+            st.rerun()
+        else:
+            st.warning("Please enter a search query.")
+            
+    active_query = st.session_state.get("browse_search_query", "")
+    if active_query:
+        st.markdown(f"### 🌐 Live AI Results for: *'{active_query}'*")
+        with st.spinner("Analyzing with Gemini..."):
+            try:
+                # Use Gemini dynamically here
+                from scheme_elligibility_engine.api_utils import generate_content_with_cascade
+                prompt = f"""You are an AI expert on Government of India schemes.
+                Provide a list of up to 5 government schemes matching the user's query: "{active_query}".
+                Respond only with a JSON object:
+                {{
+                  "schemes": [
+                    {{
+                      "scheme_name": "...",
+                      "description": "...",
+                      "eligibility": "...",
+                      "benefits": "...",
+                      "application_process": "...",
+                      "source_url": "..."
+                    }}
+                  ]
+                }}
+                """
+                response = generate_content_with_cascade(prompt, generation_config={"response_mime_type": "application/json"}, api_name="Gemini Browse API")
+                import json
+                resp_text = response.text.strip()
+                if resp_text.startswith("```"):
+                    lines = resp_text.split("\n")
+                    if lines[0].startswith("```json") or lines[0].startswith("```"):
+                        resp_text = "\n".join(lines[1:-1])
+                data = json.loads(resp_text)
+                live_schemes = data.get("schemes", [])
                 
-        active_query = st.session_state.get("browse_search_query", "")
-        if active_query:
-            st.markdown(f"### 🌐 Live Results for: *\"{active_query}\"*")
-            with st.spinner("Searching official government portals and analyzing with Gemini..."):
-                try:
-                    from search_api import browse_schemes_via_gemini
-                    live_schemes = browse_schemes_via_gemini(active_query)
-                    
-                    if not live_schemes:
-                        st.warning("⚠️ No relevant schemes found on official government portals. Please try a different query.")
-                    else:
-                        st.success(f"✓ Found {len(live_schemes)} verified schemes from official sources.")
-                        for idx, s in enumerate(live_schemes):
-                            st.markdown(f"""
-                            <div class="premium-card" style="background: #ffffff; border: 1px solid #e2e8f0; padding: 1.5rem; margin-bottom: 1rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-                                <h3 style="margin: 0 0 0.5rem 0; font-size: 1.35rem; color: #1e3a8a; font-weight: 800;">🏢 {s.get('scheme_name', 'Unknown Scheme')}</h3>
-                                <p style="color: #475569; font-size: 1rem; line-height: 1.5; margin-bottom: 1rem;">{s.get('description', '')}</p>
-                                <div style="background-color: #f8fafc; border-radius: 12px; padding: 1rem; border: 1px solid #f1f5f9; margin-bottom: 1rem; font-size: 0.95rem; line-height: 1.6; color: #1e293b;">
-                                    <b>🎯 Eligibility Criteria:</b> {s.get('eligibility', 'N/A')}<br>
-                                    <b>💰 Benefits & Subsidies:</b> {s.get('benefits', 'N/A')}<br>
-                                    <b>✍️ How to Apply:</b> {s.get('application_process', 'N/A')}<br>
-                                    <b>🌐 Source portal:</b> <span style="color: #0f766e; font-weight: 700;">{s.get('source_name', 'Official Portal')}</span>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            source_url = s.get('source_url', '#')
-                            st.link_button("Open Official Website Source", source_url, use_container_width=True, key=f"browse_live_btn_{idx}")
-                            st.write("")
-                except Exception as e:
-                    st.error(f"❌ Search failed: Web search or AI synthesis is temporarily unavailable. Error details: {str(e)}")
-        else:
-            st.info("💡 Enter a search query above to search current verified government schemes live.")
-            
-    else:
-        # Local schemes database search
-        all_schemes = load_schemes_data()
-        search_query = st.text_input(t("search_placeholder"), "")
-
-        col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            categories = sorted(list(set(s.get("category", "") for s in all_schemes)))
-            category_options = [t("all_categories")] + [c.title() for c in categories]
-            selected_category = st.selectbox(t("filter_category"), category_options)
-            
-        with col_f2:
-            states = set()
-            for s in all_schemes:
-                for st_val in s.get("state", []):
-                    if st_val != "all":
-                        states.add(st_val.title())
-            state_options = [t("all_states")] + sorted(list(states))
-            selected_state = st.selectbox(t("filter_state"), state_options)
-
-        with col_f3:
-            beneficiary_options = [
-                t("all_beneficiaries"),
-                t("beneficiary_student"),
-                t("beneficiary_farmer"),
-                t("beneficiary_women"),
-                t("beneficiary_senior"),
-                t("beneficiary_low_income")
-            ]
-            selected_beneficiary = st.selectbox(t("filter_beneficiary"), beneficiary_options)
-
-        filtered_schemes = []
-        for scheme in all_schemes:
-            if search_query and search_query.strip().lower() not in scheme.get("scheme_name", "").lower():
-                continue
-            if selected_category != t("all_categories"):
-                if scheme.get("category", "").lower() != selected_category.lower():
-                    continue
-            if selected_state != t("all_states"):
-                scheme_states = [s_val.lower() for s_val in scheme.get("state", [])]
-                if "all" not in scheme_states and selected_state.lower() not in scheme_states:
-                    continue
-            if selected_beneficiary != t("all_beneficiaries"):
-                if selected_beneficiary == t("beneficiary_student"):
-                    occupations = [o.lower() for o in scheme.get("occupation", [])]
-                    if "student" not in occupations and "any" not in occupations:
-                        continue
-                elif selected_beneficiary == t("beneficiary_farmer"):
-                    occupations = [o.lower() for o in scheme.get("occupation", [])]
-                    if "farmer" not in occupations and "any" not in occupations:
-                        continue
-                elif selected_beneficiary == t("beneficiary_women"):
-                    genders = [g.lower() for g in scheme.get("gender", [])]
-                    if "female" not in genders and "any" not in genders:
-                        continue
-                elif selected_beneficiary == t("beneficiary_senior"):
-                    if scheme.get("age_limit", {}).get("min", 0) < 60:
-                        continue
-                elif selected_beneficiary == t("beneficiary_low_income"):
-                    if scheme.get("income_limit", 9999999) > 150000:
-                        continue
-            filtered_schemes.append(scheme)
-
-        # Pagination
-        schemes_per_page = 5
-        total_filtered = len(filtered_schemes)
-        num_pages = math.ceil(total_filtered / schemes_per_page) if total_filtered > 0 else 1
-
-        if "browse_page" not in st.session_state:
-            st.session_state.browse_page = 1
-
-        # Reset page on filter change
-        filter_state_key = (search_query, selected_category, selected_state, selected_beneficiary)
-        if st.session_state.get("last_filter_state_key") != filter_state_key:
-            st.session_state.browse_page = 1
-            st.session_state.last_filter_state_key = filter_state_key
-
-        st.session_state.browse_page = max(1, min(st.session_state.browse_page, num_pages))
-
-        start_idx = (st.session_state.browse_page - 1) * schemes_per_page
-        end_idx = start_idx + schemes_per_page
-        page_schemes = filtered_schemes[start_idx:end_idx]
-
-        # Display Scheme Cards
-        if not page_schemes:
-            st.info(t("no_schemes_found"))
-        else:
-            for i, scheme in enumerate(page_schemes):
-                states_list = scheme.get("state", [])
-                if "all" in [s.lower() for s in states_list]:
-                    state_label = "Central / National"
+                if not live_schemes:
+                    st.warning("⚠️ No relevant schemes found.")
                 else:
-                    state_label = ", ".join([s.title() for s in states_list])
-                    
-                req_docs_text = ", ".join([translate_explanation(x) for x in scheme.get('required_documents', [])])
-                
-                st.markdown(f"""
-                <div class="scheme-card">
-                    <div style="display:flex; justify-content:space-between; align-items:start;">
-                        <span class="badge-partial">{state_label}</span>
-                        <span style="font-size:0.85rem; font-weight:600; background-color:#ccfbf1; color:#0f766e; padding:4px 8px; border-radius:8px;">{scheme.get('category', '').title()}</span>
-                    </div>
-                    <h3 style="color:#0f172a; margin-top:0.75rem; font-weight:800; font-size:1.35rem; margin-bottom:0.5rem;">{scheme.get('scheme_name', '')}</h3>
-                    <p style="color:#475569; font-size:1rem; line-height:1.5; margin-bottom:1rem;">{translate_explanation(scheme.get('benefit_summary', ''))}</p>
-                    <div style="background-color:#f8fafc; border-radius:12px; padding:1rem; border:1px solid #f1f5f9; margin-bottom:1rem;">
-                        <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0.5rem;"><b>{t('eligibility')}</b> {translate_explanation(scheme.get('eligibility_criteria', ''))}</p>
-                        <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0;"><b>{t('req_docs')}</b> {req_docs_text}</p>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    st.success(f"✓ Found {len(live_schemes)} schemes.")
+                    for idx, s in enumerate(live_schemes):
+                        st.markdown(f"""
+                        <div class="premium-card" style="background: #ffffff; border: 1px solid #e2e8f0; padding: 1.5rem; margin-bottom: 1rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.35rem; color: #1e3a8a; font-weight: 800;">🏢 {s.get('scheme_name', 'Unknown Scheme')}</h3>
+                            <p style="color: #475569; font-size: 1rem; line-height: 1.5; margin-bottom: 1rem;">{s.get('description', '')}</p>
+                            <div style="background-color: #f8fafc; border-radius: 12px; padding: 1rem; border: 1px solid #f1f5f9; margin-bottom: 1rem; font-size: 0.95rem; line-height: 1.6; color: #1e293b;">
+                                <b>🎯 Eligibility Criteria:</b> {s.get('eligibility', 'N/A')}<br>
+                                <b>💰 Benefits & Subsidies:</b> {s.get('benefits', 'N/A')}<br>
+                                <b>✍️ How to Apply:</b> {s.get('application_process', 'N/A')}<br>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        source_url = s.get('source_url', '#')
+                        st.link_button("Open Official Website Source", source_url, use_container_width=True, key=f"browse_live_btn_{idx}")
+                        st.write("")
+            except Exception as e:
+                st.error(f"❌ Search failed: AI synthesis is temporarily unavailable. Error details: {str(e)}")
 
-                btn_col1, btn_col2 = st.columns(2)
-                with btn_col1:
-                    if st.button(t("btn_view_details"), key=f"browse_view_{i}", type="primary", use_container_width=True):
-                        st.session_state.selected_scheme = scheme
-                        st.session_state.prev_step = 8
-                        st.session_state.step = 5
-                        st.session_state.find_centers_clicked = False
-                        st.rerun()
-                with btn_col2:
-                    apply_link = scheme.get("official_apply_link", "")
-                    st.link_button(t("btn_apply"), apply_link if apply_link else "#", use_container_width=True)
-                st.write("")
-
-            # Pagination Controls
-            st.write("---")
-            pag_col1, pag_col2, pag_col3 = st.columns([1, 2, 1])
-            with pag_col1:
-                if st.button(t("prev_page"), disabled=(st.session_state.browse_page == 1), use_container_width=True):
-                    st.session_state.browse_page -= 1
-                    st.rerun()
-            with pag_col2:
-                st.markdown(f"<p style='text-align: center; font-weight: 600; line-height: 2.2;'>{t('page')} {st.session_state.browse_page} / {num_pages} ({total_filtered} total)</p>", unsafe_allow_html=True)
-            with pag_col3:
-                if st.button(t("next_page"), disabled=(st.session_state.browse_page == num_pages), use_container_width=True):
-                    st.session_state.browse_page += 1
-                    st.rerun()
 def render_detail():
     scheme = st.session_state.get("selected_scheme")
     if not scheme:
