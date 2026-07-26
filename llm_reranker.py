@@ -72,8 +72,8 @@ def _get_model():
         return None
 
     try:
-        genai.configure(api_key=api_key)
-        _model_instance = genai.GenerativeModel("gemini-2.0-flash")
+        genai.configure(api_key=api_key, transport="rest")
+        _model_instance = genai.GenerativeModel("gemini-3.5-flash")
         return _model_instance
     except Exception as e:
         logger.error(f"Failed to initialize Gemini model: {e}")
@@ -109,30 +109,45 @@ def _build_prompt(profile: Dict[str, Any], candidates: List[Dict[str, Any]]) -> 
                 except (ValueError, TypeError):
                     profile_lines.append(f"  - {label}: {val}")
             else:
-                profile_lines.append(f"  - {label}: {str(val).capitalize()}")
+                profile_lines.append(f"  - {label}: {str(val).title()}")
         else:
-            profile_lines.append(f"  - {label}: Not provided")
+            profile_lines.append(f"  - {label}: Not specified")
 
     profile_text = "\n".join(profile_lines)
 
-    # Format candidate schemes
+    # Format candidate schemes with system rules calculation comments
     scheme_entries = []
     for i, candidate in enumerate(candidates):
         scheme = candidate.get("scheme", candidate)
+        
+        # Calculate rules to pass to Gemini
+        from logic import calculate_rule_score
+        rule_score, has_hard_block, why_matched, why_not_matched, missing_fields = calculate_rule_score(profile, scheme)
+        
+        eligibility_notes = []
+        if why_matched:
+            eligibility_notes.append("Satisfied requirements: " + ", ".join(why_matched))
+        if why_not_matched:
+            eligibility_notes.append("Mismatches/Violations: " + ", ".join(why_not_matched))
+        if missing_fields:
+            eligibility_notes.append("Missing fields: " + ", ".join(missing_fields))
+        eligibility_info = "; ".join(eligibility_notes)
+        
         entry = f"""  Scheme {i+1}: "{scheme.get('scheme_name', 'Unknown')}"
     - Category: {scheme.get('category', 'N/A')}
-    - Eligibility: {scheme.get('eligibility_criteria', 'N/A')}
-    - Benefit: {scheme.get('benefit_summary', 'N/A')}
+    - Eligibility Criteria: {scheme.get('eligibility_criteria', 'N/A')}
+    - Benefit Summary: {scheme.get('benefit_summary', 'N/A')}
     - Income Limit: ₹{scheme.get('income_limit', 'N/A')}
     - Age Range: {scheme.get('age_limit', {}).get('min', 'N/A')}-{scheme.get('age_limit', {}).get('max', 'N/A')} years
     - Target Gender: {', '.join(scheme.get('gender', ['any']))}
     - Target State: {', '.join(scheme.get('state', ['all']))}
-    - Target Occupation: {', '.join(scheme.get('occupation', ['any']))}"""
+    - Target Occupation: {', '.join(scheme.get('occupation', ['any']))}
+    - System Eligibility Rules: Score {rule_score}%, Hard Blocked? {'Yes' if has_hard_block else 'No'}. {eligibility_info}"""
         scheme_entries.append(entry)
 
     schemes_text = "\n\n".join(scheme_entries)
 
-    prompt = f"""You are an expert on Indian government welfare schemes. Your task is to evaluate how relevant each candidate scheme is for a specific citizen's profile.
+    prompt = f"""You are an expert on Indian government welfare schemes. Your task is to evaluate and re-rank candidate schemes for a specific citizen's profile.
 
 USER PROFILE:
 {profile_text}
@@ -141,24 +156,16 @@ CANDIDATE SCHEMES:
 {schemes_text}
 
 TASK:
-For each scheme, provide:
-1. A relevance score from 0 to 100 (where 100 = perfect match for this user).
-2. A brief 1-sentence explanation of why the scheme is or isn't relevant.
+Re-rank and score each candidate scheme on a scale of 0 to 100 based on actual relevance and eligibility.
 
-SCORING GUIDELINES:
-- Score 80-100: User clearly meets all or most eligibility criteria and would benefit significantly.
-- Score 50-79: User meets some criteria but may have partial mismatches or the benefit is moderately relevant.
-- Score 20-49: User has significant mismatches but the scheme might still be tangentially relevant.
-- Score 0-19: User clearly does not meet key eligibility requirements.
-
-Consider:
-- Whether the user's income, age, gender, state, and occupation match the scheme's requirements.
-- How much the user would realistically benefit from this scheme.
-- Partial matches where information is missing (be generous with missing fields).
-
-RESPOND WITH ONLY a valid JSON array, no other text:
+STRICT INSTRUCTIONS:
+1. Return only schemes that are relevant to the user's profile and for which the user satisfies the mandatory eligibility requirements.
+2. Do not recommend unrelated schemes. Do not infer eligibility when mandatory information is missing.
+3. Prioritize schemes matching the user's occupation, category, needs, and location.
+4. If a scheme is hard blocked or has critical mismatches, score it extremely low (0-10).
+5. Output ONLY a valid JSON array, no conversational text or markdown wrappers:
 [
-  {{"scheme_index": 0, "llm_score": <0-100>, "explanation": "<brief reason>"}},
+  {{"scheme_index": 0, "llm_score": <0-100>, "explanation": "<1-sentence reason matching profile>"}},
   ...
 ]"""
 
@@ -203,18 +210,21 @@ def rerank_schemes(
     # 2. Check if currently marked as rate-limited to avoid API spam
     try:
         import streamlit as st
-        if hasattr(st, "session_state") and st.session_state.get("ai_rate_limited", False):
-            logger.info("Gemini AI API is currently rate-limited. Skipping API call and using local fallback (default scores).")
-            for candidate in candidates:
-                candidate["llm_score"] = 50
-                candidate["llm_explanation"] = "LLM re-ranking unavailable"
-            return candidates
+        import time
+        if hasattr(st, "session_state"):
+            if st.session_state.get("ai_rate_limited_until", 0.0) > time.time():
+                logger.info("Gemini AI API is currently rate-limited. Skipping API call and using local fallback (default scores).")
+                for candidate in candidates:
+                    candidate["llm_score"] = 50
+                    candidate["llm_explanation"] = "LLM re-ranking unavailable"
+                return candidates
+            else:
+                st.session_state.ai_rate_limited = False
     except Exception:
         pass
 
-    # 3. Get model instance
-    model = _get_model()
-    if model is None:
+    # 3. Check if key is available
+    if not _get_api_key():
         logger.info("LLM re-ranking skipped (no API key or model unavailable).")
         for candidate in candidates:
             candidate["llm_score"] = 50
@@ -224,11 +234,15 @@ def rerank_schemes(
     try:
         prompt = _build_prompt(profile, candidates)
 
-        # 4. Call Gemini with retry & exponential backoff wrapper
-        response = execute_with_retry_and_backoff(
-            _call_gemini_api,
-            args=(model, prompt),
-            kwargs={},
+        # 4. Call Gemini via the model cascade helper
+        from api_utils import generate_content_with_cascade
+        response = generate_content_with_cascade(
+            prompt,
+            generation_config={
+                "temperature": 0.1,
+                "max_output_tokens": 2048,
+                "response_mime_type": "application/json"
+            },
             api_name="Gemini AI API"
         )
 
@@ -276,8 +290,10 @@ def rerank_schemes(
             logger.error("Gemini AI API rate limit exceeded. Falling back to local default scores.")
             try:
                 import streamlit as st
+                import time
                 if hasattr(st, "session_state"):
                     st.session_state.ai_rate_limited = True
+                    st.session_state.ai_rate_limited_until = time.time() + 30.0
             except Exception:
                 pass
         else:

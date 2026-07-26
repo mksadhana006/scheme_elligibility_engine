@@ -351,20 +351,76 @@ def semantic_search(
     """
     High-level API for semantic search over schemes.
     
-    This is the function called by logic.py. It handles engine initialization,
-    index building, and returns search results.
+    If schemes_data is provided and not empty, it computes embeddings on the fly.
+    Otherwise, it falls back to the static disk index.
     
     Args:
         profile: Normalized user profile.
-        schemes_data: The schemes list (used to ensure index is up-to-date).
+        schemes_data: The schemes list.
         user_text: Raw user input text.
         top_k: Max results to return.
         
     Returns:
         List of dicts with 'scheme_index', 'scheme', 'semantic_score'.
     """
-    engine = get_engine()
-    return engine.search(profile, user_text, top_k)
+    if schemes_data:
+        try:
+            model = _get_model()
+            
+            # 1. Convert schemes to texts
+            scheme_texts = [_scheme_to_text(s) for s in schemes_data]
+            
+            # 2. Convert query to text
+            query_text = _profile_to_query(profile, user_text)
+            
+            # 3. Generate embeddings (L2 normalized)
+            scheme_embeddings = model.encode(
+                scheme_texts,
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+            query_embedding = model.encode(
+                [query_text],
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+            
+            # 4. Compute cosine similarity (dot product on normalized)
+            scores = np.dot(scheme_embeddings, query_embedding[0])
+            
+            # 5. Build results
+            results = []
+            for idx, raw_score in enumerate(scores):
+                semantic_score = int(max(0, min(100, (float(raw_score) + 1) * 50)))
+                results.append({
+                    "scheme_index": idx,
+                    "scheme": schemes_data[idx],
+                    "semantic_score": semantic_score,
+                    "query_text": query_text
+                })
+                
+            # Sort by score descending and limit to top_k
+            results = sorted(results, key=lambda x: x["semantic_score"], reverse=True)
+            return results[:top_k]
+            
+        except Exception as e:
+            logger.warning(f"On-the-fly semantic search failed: {e}. Falling back to default scores.")
+            results = []
+            for idx, s in enumerate(schemes_data):
+                results.append({
+                    "scheme_index": idx,
+                    "scheme": s,
+                    "semantic_score": 50,
+                    "query_text": ""
+                })
+            return results
+
+    try:
+        engine = get_engine()
+        return engine.search(profile, user_text, top_k)
+    except Exception as e:
+        logger.warning(f"Static semantic search failed: {e}")
+        return []
 
 
 if __name__ == "__main__":

@@ -1,13 +1,21 @@
+from scheme_elligibility_engine import api_utils
 import json
 import math
+import os
 import streamlit as st
 import streamlit.components.v1 as components
 import time
 import re
 import requests
+<<<<<<< HEAD
 import osm_api
+=======
+import logging
+logger = logging.getLogger(__name__)
+>>>>>>> 75b3921 (modification is done)
 from logic import get_top_matches, normalize_profile
 from preprocess import build_profile
+from centers_db import fetch_nearby_places_local, geocode_address_free, fallback_text_search, haversine_distance, fetch_places_new
 
 def transliterate_to_tamil(text):
     try:
@@ -29,8 +37,19 @@ def transliterate_to_tamil(text):
 
 @st.cache_data
 def load_schemes_data():
-    with open("schemes.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+    path = "schemes.json"
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        # Check nested backup schemes.json
+        backup_path = os.path.join("scheme_elligibility_engine", "schemes.json")
+        if os.path.exists(backup_path) and os.path.getsize(backup_path) > 0:
+            with open(backup_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading schemes database: {e}")
+    return []
         
 # --- Translation Dictionaries ---
 TEXTS = {
@@ -74,7 +93,7 @@ TEXTS = {
         "meta_income": "Normalized Income:",
         "not_provided": "Not provided",
         "btn_edit_input": "← Edit Input",
-        "analyzing": "Analyzing rules & matching schemes...",
+        "analyzing": "Analyzing your profile and matching eligible government schemes...",
         "schemes_found": "schemes found",
         "based_on_profile": "Based on your verified profile",
         "btn_start_over": "Start Over",
@@ -84,7 +103,7 @@ TEXTS = {
         "cat_housing": "Housing",
         "cat_employment": "Employment",
         "cat_state": "State-specific",
-        "warn_no_schemes": "No schemes found. Please go back and edit your details.",
+        "warn_no_schemes": "No eligible schemes found for your profile.",
         "match": "Match:",
         "category": "Category:",
         "why_matched": "Why matched:",
@@ -193,7 +212,7 @@ TEXTS = {
         "meta_income": "இயல்பாக்கப்பட்ட வருமானம்:",
         "not_provided": "வழங்கப்படவில்லை",
         "btn_edit_input": "← உள்ளீட்டை திருத்து",
-        "analyzing": "விதிகளை பகுப்பாய்வு செய்து திட்டங்களை பொருத்துகிறது...",
+        "analyzing": "உங்கள் சுயவிவரத்தை பகுப்பாய்வு செய்து தகுதியான அரசு திட்டங்களை பொருத்துகிறது...",
         "schemes_found": "திட்டங்கள் கிடைத்துள்ளன",
         "based_on_profile": "உங்கள் சரிபார்க்கப்பட்ட சுயவிவரத்தின் அடிப்படையில்",
         "btn_start_over": "மீண்டும் தொடங்கு",
@@ -203,7 +222,7 @@ TEXTS = {
         "cat_housing": "வீட்டு வசதி",
         "cat_employment": "வேலைவாய்ப்பு",
         "cat_state": "மாநிலம் சார்ந்தது",
-        "warn_no_schemes": "திட்டங்கள் எதுவும் கிடைக்கவில்லை. தயவுசெய்து திரும்பிச் சென்று உங்கள் விவரங்களை திருத்தவும்.",
+        "warn_no_schemes": "உங்கள் சுயவிவரத்திற்கு தகுதியான திட்டங்கள் எதுவும் கிடைக்கவில்லை.",
         "match": "பொருத்தம்:",
         "category": "வகை:",
         "why_matched": "ஏன் பொருந்துகிறது:",
@@ -585,6 +604,34 @@ def init_session():
         st.session_state.selected_scheme = None
     if 'results' not in st.session_state:
         st.session_state.results = []
+    if 'search_rate_limited_until' not in st.session_state:
+        st.session_state.search_rate_limited_until = 0.0
+    if 'search_rate_limited' not in st.session_state:
+        st.session_state.search_rate_limited = False
+    if 'ai_rate_limited_until' not in st.session_state:
+        st.session_state.ai_rate_limited_until = 0.0
+    if 'ai_rate_limited' not in st.session_state:
+        st.session_state.ai_rate_limited = False
+    if 'detail_search_query' not in st.session_state:
+        st.session_state.detail_search_query = "e-Sevai center"
+    if 'page_search_query' not in st.session_state:
+        st.session_state.page_search_query = "e-Sevai center"
+    if 'browse_search_query' not in st.session_state:
+        st.session_state.browse_search_query = ""
+    if 'find_centers_clicked' not in st.session_state:
+        st.session_state.find_centers_clicked = False
+    if 'nearby_centers' not in st.session_state:
+        st.session_state.nearby_centers = []
+    if 'geo_state' not in st.session_state:
+        st.session_state.geo_state = "pending_input"
+    if 'user_lat' not in st.session_state:
+        st.session_state.user_lat = None
+    if 'user_lng' not in st.session_state:
+        st.session_state.user_lng = None
+    if 'location_source' not in st.session_state:
+        st.session_state.location_source = ""
+    if 'detail_entered_address' not in st.session_state:
+        st.session_state.detail_entered_address = ""
 
 def build_backend_profile():
     return {
@@ -899,26 +946,100 @@ def render_processing():
             st.rerun()
     with col2:
         if st.button(t("btn_check_eligibility"), type="primary", use_container_width=True):
+            current_time = time.time()
+            last_submit_time = st.session_state.get("last_submit_time", 0.0)
+            
+            # Cooldown guard: prevent accidental rapid repeated clicks
+            if current_time - last_submit_time < 3.0:
+                st.warning("Please wait a moment before resubmitting.")
+                st.stop()
+                
+            backend_profile = build_backend_profile()
+            normalized_profile = normalize_profile(backend_profile)
+            user_input_text = st.session_state.get("user_input", "")
+            
+            # Formulate a unique profile key to check for changes
+            current_profile_key = {
+                "profile": normalized_profile,
+                "user_text": user_input_text
+            }
+            
+            last_profile_key = st.session_state.get("last_profile_key")
+            last_results = st.session_state.get("last_results")
+            
+            # Check if profile is unchanged and we already have results
+            if last_profile_key == current_profile_key and last_results is not None:
+                logger.info("[DEBUG] User profile is unchanged. Reusing cached matching results.")
+                print("[DEBUG] User profile is unchanged. Reusing cached matching results.")
+                st.session_state.results = last_results
+                st.session_state.selected_scheme = last_results[0] if last_results else None
+                st.session_state.step = 4
+                st.rerun()
+                
+            # If we reach here, it's a new or changed profile submission
+            st.session_state.last_submit_time = current_time
+            st.session_state.last_profile_key = current_profile_key
+            
             with st.spinner(t("analyzing")):
-                time.sleep(1.0)
                 # Reset rate limit status flags for the new search
                 st.session_state.search_rate_limited = False
                 st.session_state.ai_rate_limited = False
-                backend_profile = build_backend_profile()
-                normalized_profile = normalize_profile(backend_profile)
-                schemes_data = load_schemes_data()
-                results = get_top_matches(
-                    normalized_profile,
-                    schemes_data,
-                    top_n=15,
-                    user_text=st.session_state.user_input
-                )
-                st.session_state.results = results
-                st.session_state.selected_scheme = results[0] if results else None
-                st.session_state.step = 4
-                st.rerun()
+                
+                # Fetch schemes dynamically from Tavily and Gemini
+                dynamic_schemes = []
+                try:
+                    from dynamic_retriever import fetch_schemes_dynamically
+                    dynamic_schemes = fetch_schemes_dynamically(
+                        normalized_profile,
+                        user_text=st.session_state.user_input,
+                        max_results=5
+                    )
+                except Exception as e:
+                    st.error(f"Error fetching schemes online: {e}")
+                    logger.error(f"Error in dynamic retrieval: {e}")
+                
+                # Combine dynamic search results and local database schemes as Gemini's source
+                local_schemes = load_schemes_data()
+                
+                # Deduplicate candidate schemes by scheme_name (case-insensitive)
+                candidate_names = set()
+                schemes_data = []
+                
+                # Add dynamic schemes first (prefer live search results)
+                for s in dynamic_schemes:
+                    name = s.get("scheme_name", "").strip().lower()
+                    if name and name not in candidate_names:
+                        candidate_names.add(name)
+                        schemes_data.append(s)
+                        
+                # Add local schemes
+                for s in local_schemes:
+                    name = s.get("scheme_name", "").strip().lower()
+                    if name and name not in candidate_names:
+                        candidate_names.add(name)
+                        schemes_data.append(s)
+                
+                try:
+                    results = get_top_matches(
+                        normalized_profile,
+                        schemes_data,
+                        top_n=15,
+                        user_text=st.session_state.user_input
+                    )
+                    st.session_state.results = results
+                    st.session_state.last_results = results  # cache results
+                    st.session_state.selected_scheme = results[0] if results else None
+                    st.session_state.step = 4
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error matching schemes: {e}")
+                    logger.error(f"Error in matching: {e}")
 
 def render_results():
+    # Log 7: UI displays the Gemini-generated matching results
+    logger.info(f"[DEBUG] UI rendering Gemini-generated matching results: {[r.get('scheme_name') for r in st.session_state.results]}")
+    print(f"[DEBUG] UI rendering Gemini-generated matching results: {[r.get('scheme_name') for r in st.session_state.results]}")
+    
     col1, col2 = st.columns([3, 1])
     with col1:
         total = len(st.session_state.results)
@@ -927,6 +1048,8 @@ def render_results():
     
     if st.session_state.get("ai_rate_limited"):
         st.warning(t("ai_rate_limited"))
+    if st.session_state.get("search_rate_limited"):
+        st.warning(t("live_search_rate_limited"))
 
     with col2:
         if st.button(t("btn_start_over"), use_container_width=True):
@@ -986,6 +1109,7 @@ def render_results():
                 st.session_state.selected_scheme = scheme
                 st.session_state.prev_step = 4
                 st.session_state.step = 5
+                st.session_state.find_centers_clicked = False
                 st.rerun()
         with btn_col2:
             st.button(t("btn_save_later"), key=f"save_{i}", use_container_width=True)
@@ -1036,154 +1160,189 @@ def render_browse_schemes():
     st.markdown(f"<h1 class='main-header'>{t('browse_schemes_title')}</h1>", unsafe_allow_html=True)
     st.write("")
 
-    all_schemes = load_schemes_data()
+    # Toggle between live AI-grounded search and local schemes database
+    use_live_search = st.toggle("🔍 Search live official government portals using AI (grounded on gov.in)", value=True, key="browse_use_live_search")
     
-    # 1. Search Bar
-    search_query = st.text_input(t("search_placeholder"), "")
-
-    # 2. Filters
-    col_f1, col_f2, col_f3 = st.columns(3)
-    with col_f1:
-        categories = sorted(list(set(s.get("category", "") for s in all_schemes)))
-        category_options = [t("all_categories")] + [c.title() for c in categories]
-        selected_category = st.selectbox(t("filter_category"), category_options)
-        
-    with col_f2:
-        states = set()
-        for s in all_schemes:
-            for st_val in s.get("state", []):
-                if st_val != "all":
-                    states.add(st_val.title())
-        state_options = [t("all_states")] + sorted(list(states))
-        selected_state = st.selectbox(t("filter_state"), state_options)
-
-    with col_f3:
-        beneficiary_options = [
-            t("all_beneficiaries"),
-            t("beneficiary_student"),
-            t("beneficiary_farmer"),
-            t("beneficiary_women"),
-            t("beneficiary_senior"),
-            t("beneficiary_low_income")
-        ]
-        selected_beneficiary = st.selectbox(t("filter_beneficiary"), beneficiary_options)
-
-    # 3. Filtering Logic
-    filtered_schemes = []
-    for scheme in all_schemes:
-        # Search Query filter
-        if search_query and search_query.strip().lower() not in scheme.get("scheme_name", "").lower():
-            continue
-            
-        # Category filter
-        if selected_category != t("all_categories"):
-            if scheme.get("category", "").lower() != selected_category.lower():
-                continue
-                
-        # State/Central filter
-        if selected_state != t("all_states"):
-            scheme_states = [s_val.lower() for s_val in scheme.get("state", [])]
-            if "all" not in scheme_states and selected_state.lower() not in scheme_states:
-                continue
-                
-        # Beneficiary filter
-        if selected_beneficiary != t("all_beneficiaries"):
-            if selected_beneficiary == t("beneficiary_student"):
-                occupations = [o.lower() for o in scheme.get("occupation", [])]
-                if "student" not in occupations and "any" not in occupations:
-                    continue
-            elif selected_beneficiary == t("beneficiary_farmer"):
-                occupations = [o.lower() for o in scheme.get("occupation", [])]
-                if "farmer" not in occupations and "any" not in occupations:
-                    continue
-            elif selected_beneficiary == t("beneficiary_women"):
-                genders = [g.lower() for g in scheme.get("gender", [])]
-                if "female" not in genders and "any" not in genders:
-                    continue
-            elif selected_beneficiary == t("beneficiary_senior"):
-                if scheme.get("age_limit", {}).get("min", 0) < 60:
-                    continue
-            elif selected_beneficiary == t("beneficiary_low_income"):
-                if scheme.get("income_limit", 9999999) > 150000:
-                    continue
-                    
-        filtered_schemes.append(scheme)
-
-    # 4. Pagination
-    schemes_per_page = 5
-    total_filtered = len(filtered_schemes)
-    num_pages = math.ceil(total_filtered / schemes_per_page) if total_filtered > 0 else 1
-
-    if "browse_page" not in st.session_state:
-        st.session_state.browse_page = 1
-
-    # Reset page on filter change
-    filter_state_key = (search_query, selected_category, selected_state, selected_beneficiary)
-    if st.session_state.get("last_filter_state_key") != filter_state_key:
-        st.session_state.browse_page = 1
-        st.session_state.last_filter_state_key = filter_state_key
-
-    st.session_state.browse_page = max(1, min(st.session_state.browse_page, num_pages))
-
-    start_idx = (st.session_state.browse_page - 1) * schemes_per_page
-    end_idx = start_idx + schemes_per_page
-    page_schemes = filtered_schemes[start_idx:end_idx]
-
-    # 5. Display Scheme Cards
-    if not page_schemes:
-        st.info(t("no_schemes_found"))
-    else:
-        for i, scheme in enumerate(page_schemes):
-            states_list = scheme.get("state", [])
-            if "all" in [s.lower() for s in states_list]:
-                state_label = "Central / National"
+    if use_live_search:
+        # Search Bar for live search
+        search_query = st.text_input("Search current government schemes (e.g. 'farmer schemes', 'subsidies'):", value=st.session_state.get("browse_search_query", ""), placeholder="Type query and click search...")
+        if st.button("Search Web-grounded Schemes", type="primary", use_container_width=True):
+            if search_query.strip():
+                st.session_state.browse_search_query = search_query
+                st.rerun()
             else:
-                state_label = ", ".join([s.title() for s in states_list])
+                st.warning("Please enter a search query.")
                 
-            req_docs_text = ", ".join([translate_explanation(x) for x in scheme.get('required_documents', [])])
+        active_query = st.session_state.get("browse_search_query", "")
+        if active_query:
+            st.markdown(f"### 🌐 Live Results for: *\"{active_query}\"*")
+            with st.spinner("Searching official government portals and analyzing with Gemini..."):
+                try:
+                    from search_api import browse_schemes_via_gemini
+                    live_schemes = browse_schemes_via_gemini(active_query)
+                    
+                    if not live_schemes:
+                        st.warning("⚠️ No relevant schemes found on official government portals. Please try a different query.")
+                    else:
+                        st.success(f"✓ Found {len(live_schemes)} verified schemes from official sources.")
+                        for idx, s in enumerate(live_schemes):
+                            st.markdown(f"""
+                            <div class="premium-card" style="background: #ffffff; border: 1px solid #e2e8f0; padding: 1.5rem; margin-bottom: 1rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                                <h3 style="margin: 0 0 0.5rem 0; font-size: 1.35rem; color: #1e3a8a; font-weight: 800;">🏢 {s.get('scheme_name', 'Unknown Scheme')}</h3>
+                                <p style="color: #475569; font-size: 1rem; line-height: 1.5; margin-bottom: 1rem;">{s.get('description', '')}</p>
+                                <div style="background-color: #f8fafc; border-radius: 12px; padding: 1rem; border: 1px solid #f1f5f9; margin-bottom: 1rem; font-size: 0.95rem; line-height: 1.6; color: #1e293b;">
+                                    <b>🎯 Eligibility Criteria:</b> {s.get('eligibility', 'N/A')}<br>
+                                    <b>💰 Benefits & Subsidies:</b> {s.get('benefits', 'N/A')}<br>
+                                    <b>✍️ How to Apply:</b> {s.get('application_process', 'N/A')}<br>
+                                    <b>🌐 Source portal:</b> <span style="color: #0f766e; font-weight: 700;">{s.get('source_name', 'Official Portal')}</span>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            source_url = s.get('source_url', '#')
+                            st.link_button("Open Official Website Source", source_url, use_container_width=True, key=f"browse_live_btn_{idx}")
+                            st.write("")
+                except Exception as e:
+                    st.error(f"❌ Search failed: Web search or AI synthesis is temporarily unavailable. Error details: {str(e)}")
+        else:
+            st.info("💡 Enter a search query above to search current verified government schemes live.")
             
-            st.markdown(f"""
-            <div class="scheme-card">
-                <div style="display:flex; justify-content:space-between; align-items:start;">
-                    <span class="badge-partial">{state_label}</span>
-                    <span style="font-size:0.85rem; font-weight:600; background-color:#ccfbf1; color:#0f766e; padding:4px 8px; border-radius:8px;">{scheme.get('category', '').title()}</span>
-                </div>
-                <h3 style="color:#0f172a; margin-top:0.75rem; font-weight:800; font-size:1.35rem; margin-bottom:0.5rem;">{scheme.get('scheme_name', '')}</h3>
-                <p style="color:#475569; font-size:1rem; line-height:1.5; margin-bottom:1rem;">{translate_explanation(scheme.get('benefit_summary', ''))}</p>
-                <div style="background-color:#f8fafc; border-radius:12px; padding:1rem; border:1px solid #f1f5f9; margin-bottom:1rem;">
-                    <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0.5rem;"><b>{t('eligibility')}</b> {translate_explanation(scheme.get('eligibility_criteria', ''))}</p>
-                    <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0;"><b>{t('req_docs')}</b> {req_docs_text}</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    else:
+        # Local schemes database search
+        all_schemes = load_schemes_data()
+        search_query = st.text_input(t("search_placeholder"), "")
 
-            btn_col1, btn_col2 = st.columns(2)
-            with btn_col1:
-                # view detail button, save origin step
-                if st.button(t("btn_view_details"), key=f"browse_view_{i}", type="primary", use_container_width=True):
-                    st.session_state.selected_scheme = scheme
-                    st.session_state.prev_step = 8
-                    st.session_state.step = 5
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            categories = sorted(list(set(s.get("category", "") for s in all_schemes)))
+            category_options = [t("all_categories")] + [c.title() for c in categories]
+            selected_category = st.selectbox(t("filter_category"), category_options)
+            
+        with col_f2:
+            states = set()
+            for s in all_schemes:
+                for st_val in s.get("state", []):
+                    if st_val != "all":
+                        states.add(st_val.title())
+            state_options = [t("all_states")] + sorted(list(states))
+            selected_state = st.selectbox(t("filter_state"), state_options)
+
+        with col_f3:
+            beneficiary_options = [
+                t("all_beneficiaries"),
+                t("beneficiary_student"),
+                t("beneficiary_farmer"),
+                t("beneficiary_women"),
+                t("beneficiary_senior"),
+                t("beneficiary_low_income")
+            ]
+            selected_beneficiary = st.selectbox(t("filter_beneficiary"), beneficiary_options)
+
+        filtered_schemes = []
+        for scheme in all_schemes:
+            if search_query and search_query.strip().lower() not in scheme.get("scheme_name", "").lower():
+                continue
+            if selected_category != t("all_categories"):
+                if scheme.get("category", "").lower() != selected_category.lower():
+                    continue
+            if selected_state != t("all_states"):
+                scheme_states = [s_val.lower() for s_val in scheme.get("state", [])]
+                if "all" not in scheme_states and selected_state.lower() not in scheme_states:
+                    continue
+            if selected_beneficiary != t("all_beneficiaries"):
+                if selected_beneficiary == t("beneficiary_student"):
+                    occupations = [o.lower() for o in scheme.get("occupation", [])]
+                    if "student" not in occupations and "any" not in occupations:
+                        continue
+                elif selected_beneficiary == t("beneficiary_farmer"):
+                    occupations = [o.lower() for o in scheme.get("occupation", [])]
+                    if "farmer" not in occupations and "any" not in occupations:
+                        continue
+                elif selected_beneficiary == t("beneficiary_women"):
+                    genders = [g.lower() for g in scheme.get("gender", [])]
+                    if "female" not in genders and "any" not in genders:
+                        continue
+                elif selected_beneficiary == t("beneficiary_senior"):
+                    if scheme.get("age_limit", {}).get("min", 0) < 60:
+                        continue
+                elif selected_beneficiary == t("beneficiary_low_income"):
+                    if scheme.get("income_limit", 9999999) > 150000:
+                        continue
+            filtered_schemes.append(scheme)
+
+        # Pagination
+        schemes_per_page = 5
+        total_filtered = len(filtered_schemes)
+        num_pages = math.ceil(total_filtered / schemes_per_page) if total_filtered > 0 else 1
+
+        if "browse_page" not in st.session_state:
+            st.session_state.browse_page = 1
+
+        # Reset page on filter change
+        filter_state_key = (search_query, selected_category, selected_state, selected_beneficiary)
+        if st.session_state.get("last_filter_state_key") != filter_state_key:
+            st.session_state.browse_page = 1
+            st.session_state.last_filter_state_key = filter_state_key
+
+        st.session_state.browse_page = max(1, min(st.session_state.browse_page, num_pages))
+
+        start_idx = (st.session_state.browse_page - 1) * schemes_per_page
+        end_idx = start_idx + schemes_per_page
+        page_schemes = filtered_schemes[start_idx:end_idx]
+
+        # Display Scheme Cards
+        if not page_schemes:
+            st.info(t("no_schemes_found"))
+        else:
+            for i, scheme in enumerate(page_schemes):
+                states_list = scheme.get("state", [])
+                if "all" in [s.lower() for s in states_list]:
+                    state_label = "Central / National"
+                else:
+                    state_label = ", ".join([s.title() for s in states_list])
+                    
+                req_docs_text = ", ".join([translate_explanation(x) for x in scheme.get('required_documents', [])])
+                
+                st.markdown(f"""
+                <div class="scheme-card">
+                    <div style="display:flex; justify-content:space-between; align-items:start;">
+                        <span class="badge-partial">{state_label}</span>
+                        <span style="font-size:0.85rem; font-weight:600; background-color:#ccfbf1; color:#0f766e; padding:4px 8px; border-radius:8px;">{scheme.get('category', '').title()}</span>
+                    </div>
+                    <h3 style="color:#0f172a; margin-top:0.75rem; font-weight:800; font-size:1.35rem; margin-bottom:0.5rem;">{scheme.get('scheme_name', '')}</h3>
+                    <p style="color:#475569; font-size:1rem; line-height:1.5; margin-bottom:1rem;">{translate_explanation(scheme.get('benefit_summary', ''))}</p>
+                    <div style="background-color:#f8fafc; border-radius:12px; padding:1rem; border:1px solid #f1f5f9; margin-bottom:1rem;">
+                        <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0.5rem;"><b>{t('eligibility')}</b> {translate_explanation(scheme.get('eligibility_criteria', ''))}</p>
+                        <p style="color:#1e293b; font-size:0.95rem; margin-bottom:0;"><b>{t('req_docs')}</b> {req_docs_text}</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                btn_col1, btn_col2 = st.columns(2)
+                with btn_col1:
+                    if st.button(t("btn_view_details"), key=f"browse_view_{i}", type="primary", use_container_width=True):
+                        st.session_state.selected_scheme = scheme
+                        st.session_state.prev_step = 8
+                        st.session_state.step = 5
+                        st.session_state.find_centers_clicked = False
+                        st.rerun()
+                with btn_col2:
+                    apply_link = scheme.get("official_apply_link", "")
+                    st.link_button(t("btn_apply"), apply_link if apply_link else "#", use_container_width=True)
+                st.write("")
+
+            # Pagination Controls
+            st.write("---")
+            pag_col1, pag_col2, pag_col3 = st.columns([1, 2, 1])
+            with pag_col1:
+                if st.button(t("prev_page"), disabled=(st.session_state.browse_page == 1), use_container_width=True):
+                    st.session_state.browse_page -= 1
                     st.rerun()
-            with btn_col2:
-                apply_link = scheme.get("official_apply_link", "")
-                st.link_button(t("btn_apply"), apply_link if apply_link else "#", use_container_width=True)
-            st.write("")
-
-        # 6. Pagination Controls
-        st.write("---")
-        pag_col1, pag_col2, pag_col3 = st.columns([1, 2, 1])
-        with pag_col1:
-            if st.button(t("prev_page"), disabled=(st.session_state.browse_page == 1), use_container_width=True):
-                st.session_state.browse_page -= 1
-                st.rerun()
-        with pag_col2:
-            st.markdown(f"<p style='text-align: center; font-weight: 600; line-height: 2.2;'>{t('page')} {st.session_state.browse_page} / {num_pages} ({total_filtered} total)</p>", unsafe_allow_html=True)
-        with pag_col3:
-            if st.button(t("next_page"), disabled=(st.session_state.browse_page == num_pages), use_container_width=True):
-                st.session_state.browse_page += 1
-                st.rerun()
-
+            with pag_col2:
+                st.markdown(f"<p style='text-align: center; font-weight: 600; line-height: 2.2;'>{t('page')} {st.session_state.browse_page} / {num_pages} ({total_filtered} total)</p>", unsafe_allow_html=True)
+            with pag_col3:
+                if st.button(t("next_page"), disabled=(st.session_state.browse_page == num_pages), use_container_width=True):
+                    st.session_state.browse_page += 1
+                    st.rerun()
 def render_detail():
     scheme = st.session_state.get("selected_scheme")
     if not scheme:
@@ -1236,9 +1395,256 @@ def render_detail():
         st.markdown("<ul style='color:#166534; font-size:1rem; line-height:1.8; margin-top:16px; font-weight:500;'>" + "".join([f"<li>{translate_explanation(doc)}</li>" for doc in scheme.get("required_documents", [])]) + "</ul>", unsafe_allow_html=True)
         st.link_button(t("btn_apply"), scheme.get("official_apply_link", "#"), use_container_width=True)
         st.write("")
-        if st.button(t("btn_find_center"), type="primary", use_container_width=True):
-            st.session_state.step = 7
-            st.rerun()
+        st.write("---")
+        # Subtitle
+        st.markdown(f"<h4 style='color:#0f172a; font-weight:700; margin-top:1rem;'>📍 {t('find_center_title')}</h4>", unsafe_allow_html=True)
+        
+        # Input field for location search
+        user_address = st.text_input(
+            "Enter your location (e.g. area, city, pincode, or address):",
+            value=st.session_state.get("detail_entered_address", ""),
+            key="detail_entered_address_input",
+            placeholder="Type location..."
+        )
+        
+        # Input field for search query
+        user_query = st.text_input(
+            "Enter type of center to find (e.g. e-Sevai center, CSC center):",
+            value=st.session_state.get("detail_search_query", "e-Sevai center"),
+            key="detail_search_query_input",
+            placeholder="Type center type..."
+        )
+        
+        col_search, col_gps = st.columns([1, 1])
+        with col_search:
+            if st.button("Find Nearest Centers", type="primary", use_container_width=True):
+                st.session_state.find_centers_clicked = True
+                st.session_state.detail_entered_address = user_address
+                st.session_state.detail_search_query = user_query
+                if user_address.strip():
+                    with st.spinner("Finding location details..."):
+                        try:
+                            geocode_res = geocode_address_free(user_address)
+                            if geocode_res:
+                                lat, lng, formatted_addr = geocode_res
+                                st.session_state.user_lat = lat
+                                st.session_state.user_lng = lng
+                                st.session_state.location_source = formatted_addr
+                                st.session_state.geo_state = "granted"
+                            else:
+                                st.session_state.user_lat = None
+                                st.session_state.user_lng = None
+                                st.session_state.location_source = user_address
+                                st.session_state.geo_state = "fallback_search"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Could not find location: {str(e)}")
+                else:
+                    st.warning("Please enter a location.")
+        with col_gps:
+            if st.button("Use GPS Location", use_container_width=True):
+                st.session_state.find_centers_clicked = True
+                st.session_state.geo_state = "requesting"
+                st.session_state.user_lat = None
+                st.session_state.user_lng = None
+                st.rerun()
+        
+        if st.session_state.find_centers_clicked:
+            
+            # Render Geolocation request HTML/JS if we are requesting via GPS
+            if st.session_state.geo_state == "requesting":
+                geo_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body {{ font-family: sans-serif; background: transparent; margin: 0; padding: 10px; }}
+                        #debug-box {{ border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-size: 13px; background: #f8fafc; display: none; }}
+                    </style>
+                </head>
+                <body>
+                    <div id="debug-box">
+                        <span id="d-res">Waiting...</span>
+                    </div>
+                    
+                    <script>
+                        function setInput(placeholder, value) {{
+                            try {{
+                                const inputs = window.parent.document.querySelectorAll('input');
+                                for (let input of inputs) {{
+                                    if (input.placeholder === placeholder) {{
+                                        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+                                        nativeSetter.call(input, value);
+                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                        return true;
+                                    }}
+                                }}
+                            }} catch(e) {{
+                                console.error(e);
+                            }}
+                            return false;
+                        }}
+
+                        window.onload = function() {{
+                            try {{
+                                const parentHasGeo = window.parent && window.parent.navigator && window.parent.navigator.geolocation;
+                                if (parentHasGeo) {{
+                                    window.parent.eval(`
+                                        navigator.geolocation.getCurrentPosition(
+                                            (position) => {{
+                                                const inputs = document.querySelectorAll('input');
+                                                for (let input of inputs) {{
+                                                    if (input.placeholder === 'geo_lat') {{
+                                                        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                        nativeSetter.call(input, position.coords.latitude.toString());
+                                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                    }}
+                                                    if (input.placeholder === 'geo_lng') {{
+                                                        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                        nativeSetter.call(input, position.coords.longitude.toString());
+                                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                    }}
+                                                }}
+                                            }},
+                                            (error) => {{
+                                                let reason = "Unknown error";
+                                                if (error.code === 1) reason = "Permission denied";
+                                                if (error.code === 2) reason = "Location unavailable";
+                                                if (error.code === 3) reason = "Timeout";
+                                                const inputs = document.querySelectorAll('input');
+                                                for (let input of inputs) {{
+                                                    if (input.placeholder === 'geo_err') {{
+                                                        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                        nativeSetter.call(input, reason);
+                                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                    }}
+                                                }}
+                                            }},
+                                            {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
+                                        );
+                                    `);
+                                }} else {{
+                                    setInput("geo_err", "Unsupported");
+                                }}
+                            }} catch (err) {{
+                                setInput("geo_err", err.message);
+                            }}
+                        }};
+                    </script>
+                </body>
+                </html>
+                """
+                components.html(geo_html, height=0)
+                
+            # Render hidden Streamlit widgets
+            st.markdown("""
+            <style>
+                div[data-testid="stTextInput"]:has(input[placeholder="geo_lat"]),
+                div[data-testid="stTextInput"]:has(input[placeholder="geo_lng"]),
+                div[data-testid="stTextInput"]:has(input[placeholder="geo_err"]) {
+                    display: none !important;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            lat_val = st.text_input("Lat", value="", placeholder="geo_lat", key="detail_geo_lat", label_visibility="collapsed")
+            lng_val = st.text_input("Lng", value="", placeholder="geo_lng", key="detail_geo_lng", label_visibility="collapsed")
+            err_val = st.text_input("Err", value="", placeholder="geo_err", key="detail_geo_err", label_visibility="collapsed")
+            
+            import logging
+            logger = logging.getLogger("geolocation_workflow")
+            
+            # Check inputs to update state
+            if err_val and st.session_state.geo_state == "requesting":
+                logger.warning(f"Geolocation error/permission response received from browser: {err_val}")
+                st.session_state.geo_state = err_val
+                st.rerun()
+                
+            if lat_val and lng_val and st.session_state.geo_state == "requesting":
+                try:
+                    st.session_state.user_lat = float(lat_val)
+                    st.session_state.user_lng = float(lng_val)
+                    st.session_state.location_source = "GPS Coordinates"
+                    st.session_state.geo_state = "granted"
+                    logger.info(f"Geolocation permission granted: lat={lat_val}, lng={lng_val}")
+                    st.rerun()
+                except ValueError as e:
+                    logger.error(f"Error parsing geolocation coordinate values lat={lat_val}, lng={lng_val}: {str(e)}")
+            
+            # Render states
+            if st.session_state.geo_state == "requesting":
+                st.info("Detecting your location, please accept the browser permission request...")
+            elif "denied" in str(st.session_state.geo_state).lower() or "permission" in str(st.session_state.geo_state).lower():
+                logger.warning("User denied location permission.")
+                st.warning("Location permission was denied. Please enter your location manually in the search box above.")
+            elif st.session_state.geo_state == "granted":
+                user_lat = st.session_state.user_lat
+                user_lng = st.session_state.user_lng
+                
+                if user_lat is not None and user_lng is not None:
+                    # Retrieve the custom query entered by the user
+                    search_query_val = st.session_state.get("detail_search_query_input", "e-Sevai center")
+                    if not search_query_val.strip():
+                        search_query_val = "e-Sevai center"
+                        
+                    # Fetch and show centers using Google Places API (New)
+                    try:
+                        logger.info(f"Fetching live application centers for lat={user_lat}, lng={user_lng}, query='{search_query_val}'")
+                        
+                        # Load Maps API Key from environment
+                        api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+                        if not api_key:
+                            st.error("❌ Google Maps API Key is missing from the environment. Please check your .env configuration.")
+                            nearby_centers = []
+                        else:
+                            # Use 3km (3000m) default radius as requested
+                            nearby_centers = fetch_places_new(user_lat, user_lng, search_query_val, api_key, radius_meters=3000.0)
+                        
+                        if not nearby_centers:
+                            st.warning(f"⚠️ No '{search_query_val}' centers were found within 3 km of this location.")
+                        else:
+                            st.success(f"✓ Showing centers near: {st.session_state.get('location_source', 'your location')}")
+                            
+                            import urllib.parse
+                            for idx, c in enumerate(nearby_centers):
+                                if idx == 0:
+                                    bg_style = "background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #059669; box-shadow: 0 4px 6px rgba(5,150,105,0.05);"
+                                    badge = "<span style='color:#059669; font-weight:700; font-size:0.8rem; background:#d1fae5; padding:2px 6px; border-radius:4px;'>Nearest Center</span>"
+                                    st.markdown("##### 🏢 Nearest Center Details")
+                                else:
+                                    if idx == 1:
+                                        st.markdown("##### 📍 Other Nearby Centers (within 3 km)")
+                                    bg_style = "background: #ffffff; border: 1px solid #e2e8f0;"
+                                    badge = ""
+                                    
+                                st.markdown(f"""
+                                <div class="premium-card" style="{bg_style} padding: 12px; margin-bottom: 10px; border-radius: 8px; font-size: 0.9rem;">
+                                    <b style="color: #0f172a; font-size: 1rem;">{c['name']}</b> {badge}<br>
+                                    <div style="margin-top: 6px; color: #475569; line-height: 1.4;">
+                                        <b>Address:</b> {c['address']}<br>
+                                        <b>Distance:</b> <span style="font-weight: 700; color: #0d9488;">{c['distance']:.2f} km</span> from your current location<br>
+                                        <b>Latitude:</b> {c['lat']}<br>
+                                        <b>Longitude:</b> {c['lng']}
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                
+                                query_str = urllib.parse.quote(f"{c['name']}, {c['address']}")
+                                st.link_button("Open in Google Maps", f"https://www.google.com/maps/search/?api=1&query={query_str}", use_container_width=True, key=f"detail_btn_map_{idx}")
+                                
+                    except Exception as e:
+                        logger.exception(f"Exception raised in Places API lookup: {str(e)}")
+                        st.error(f"⚠️ Could not search for nearby centers: {str(e)}")
+            elif st.session_state.geo_state == "fallback_search":
+                # When geocoding is unavailable or fails
+                st.error("❌ Invalid location: We could not resolve coordinates for this address. Please try a different address (e.g. city or state).")
+            else:
+                logger.error(f"Invalid geo_state encountered: {st.session_state.geo_state}")
+                st.error(f"❌ Location detection failed: {st.session_state.geo_state}")
 
 def render_no_match():
     st.write("")
@@ -1552,6 +1958,90 @@ def get_recommended_center_type(scheme, state):
     else:
         return state_center
 
+def geocode_address(address):
+    import os
+    import requests
+    import logging
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    logger = logging.getLogger("geolocation_workflow")
+    
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    if not api_key or api_key == "your_google_maps_api_key_here":
+        raise ValueError("Google Maps API key is not configured. Please set GOOGLE_MAPS_API_KEY in your environment variables/file.")
+        
+    url = "https://maps.googleapis.com/maps/api/geocode/json"
+    params = {
+        "address": address,
+        "key": api_key
+    }
+    
+    logger.info(f"Sending Google Geocoding API request for address: {address}")
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            status = data.get("status")
+            if status == "OK" and data.get("results"):
+                loc = data["results"][0]["geometry"]["location"]
+                formatted_address = data["results"][0].get("formatted_address", address)
+                logger.info(f"Geocoding successful: lat={loc['lat']}, lng={loc['lng']}, formatted_address={formatted_address}")
+                return loc["lat"], loc["lng"], formatted_address
+            else:
+                error_message = data.get("error_message", "Geocoding failed.")
+                raise Exception(f"Geocoding API returned status {status}: {error_message}")
+        else:
+            raise Exception(f"HTTP error {response.status_code}")
+    except Exception as e:
+        logger.exception("Error while geocoding address")
+        raise Exception(f"Failed to geocode address: {str(e)}")
+
+def fetch_nearby_places(lat, lng, radius=5000):
+    import os
+    import logging
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    logger = logging.getLogger("geolocation_workflow")
+    
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    if not api_key or api_key == "your_google_maps_api_key_here":
+        raise ValueError("Google Maps API key is not configured. Please set GOOGLE_MAPS_API_KEY in your environment variables/file.")
+        
+    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    params = {
+        "location": f"{lat},{lng}",
+        "radius": radius,
+        "keyword": "e-sevai center CSC citizen service center government office",
+        "key": api_key
+    }
+    
+    logger.info(f"Sending Google Places API request to {url} with parameters: location={lat},{lng}, radius={radius}")
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        logger.info(f"Google Places API HTTP Status Code: {response.status_code}")
+        
+        data = response.json()
+        logger.info(f"Google Places API Full Response JSON: {data}")
+        
+        status = data.get("status")
+        error_message = data.get("error_message", "No detailed error message provided by Google Places API.")
+        
+        if status == "OK":
+            return data.get("results", [])
+        elif status == "ZERO_RESULTS":
+            return []
+        elif status in ["REQUEST_DENIED", "INVALID_KEY", "API_NOT_ACTIVATED", "INVALID_REQUEST", "OVER_QUERY_LIMIT"]:
+            raise Exception(f"Google Places API returned {status}: {error_message}")
+        else:
+            raise Exception(f"Google Places API returned status {status}: {error_message}")
+            
+    except requests.exceptions.RequestException as e:
+        logger.exception("Network error while connecting to Google Places API")
+        raise Exception(f"Network error while connecting to Google Places API: {str(e)}")
+
 def render_nearest_centers():
     import requests
     scheme = st.session_state.get("selected_scheme")
@@ -1561,6 +2051,7 @@ def render_nearest_centers():
 
     # Reset manual mode if we already have GPS granted
     if "geo_state" not in st.session_state:
+<<<<<<< HEAD
         st.session_state.geo_state = "requesting"
     if st.session_state.geo_state == "granted" and st.session_state.get("location_source") == "gps":
         st.session_state.manual_location_mode = False
@@ -1569,10 +2060,77 @@ def render_nearest_centers():
 
     if "location_retry_failed" not in st.session_state:
         st.session_state.location_retry_failed = False
+=======
+        st.session_state.geo_state = "pending_input"
+>>>>>>> 75b3921 (modification is done)
         
     st.markdown(f"<h2 style='color:#0f172a; font-weight:800; margin-bottom:0.5rem;'>{t('find_center_title')}</h2>", unsafe_allow_html=True)
     if scheme:
         st.markdown(f"<p style='color:#64748b; font-size:1.15rem; margin-bottom:1.5rem;'>{t('find_center_desc').replace('{scheme_name}', scheme.get('scheme_name', ''))}</p>", unsafe_allow_html=True)
+
+    # Let the user type their location
+    user_address = st.text_input(
+        "Enter your location (e.g. area, city, pincode, or address):",
+        value=st.session_state.get("page_entered_address", ""),
+        key="page_entered_address_input",
+        placeholder="Type location..."
+    )
+    
+    # Input field for search query
+    user_query = st.text_input(
+        "Enter type of center to find (e.g. e-Sevai center, CSC center):",
+        value=st.session_state.get("page_search_query", "e-Sevai center"),
+        key="page_search_query_input",
+        placeholder="Type center type..."
+    )
+    
+    # Radius Selection
+    radius_km = st.selectbox(
+        "Select maximum search radius:",
+        options=[1, 5, 10, 25, 50],
+        index=1, # Default is 5 km
+        format_func=lambda x: f"{x} km",
+        key="page_search_radius_select"
+    )
+    
+    col_search, col_gps, col_manual = st.columns([1.5, 1.5, 1.5])
+    with col_search:
+        if st.button("Search Centers", type="primary", use_container_width=True, key="page_search_btn"):
+            st.session_state.page_entered_address = user_address
+            st.session_state.page_search_query = user_query
+            if user_address.strip():
+                with st.spinner("Finding location details..."):
+                    try:
+                        geocode_res = geocode_address_free(user_address)
+                        if geocode_res:
+                            lat, lng, formatted_addr = geocode_res
+                            st.session_state.user_lat = lat
+                            st.session_state.user_lng = lng
+                            st.session_state.location_source = formatted_addr
+                            st.session_state.geo_state = "granted"
+                        else:
+                            st.session_state.user_lat = None
+                            st.session_state.user_lng = None
+                            st.session_state.location_source = user_address
+                            st.session_state.geo_state = "fallback_search"
+                        st.session_state.manual_location_mode = False
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not find location: {str(e)}")
+            else:
+                st.warning("Please enter a location.")
+    with col_gps:
+        if st.button("Use GPS Location", use_container_width=True, key="page_gps_btn"):
+            st.session_state.geo_state = "requesting"
+            st.session_state.user_lat = None
+            st.session_state.user_lng = None
+            st.session_state.manual_location_mode = False
+            st.rerun()
+    with col_manual:
+        if st.button("Choose City Dropdown", use_container_width=True, key="page_manual_btn"):
+            st.session_state.manual_location_mode = True
+            st.session_state.geo_state = "manual"
+            st.rerun()
 
     if st.session_state.geo_state == "requesting" and not st.session_state.manual_location_mode:
         geo_html = f"""
@@ -1580,10 +2138,22 @@ def render_nearest_centers():
         <html>
         <head>
             <style>
+<<<<<<< HEAD
                 body {{ font-family: sans-serif; background: transparent; margin: 0; padding: 0; }}
             </style>
         </head>
         <body>
+=======
+                body {{ font-family: sans-serif; background: transparent; margin: 0; padding: 10px; }}
+                #debug-box {{ border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-size: 13px; background: #f8fafc; display: none; }}
+            </style>
+        </head>
+        <body>
+            <div id="debug-box">
+                <span id="d-res">Waiting...</span>
+            </div>
+            
+>>>>>>> 75b3921 (modification is done)
             <script>
                 function setInput(placeholder, value) {{
                     try {{
@@ -1598,14 +2168,18 @@ def render_nearest_centers():
                             }}
                         }}
                     }} catch(e) {{
+<<<<<<< HEAD
+=======
+                        console.error(e);
+>>>>>>> 75b3921 (modification is done)
                     }}
                     return false;
                 }}
 
                 window.onload = function() {{
                     const nav = window.parent.navigator.geolocation ? window.parent.navigator : navigator;
-                    
                     if (nav && nav.geolocation) {{
+<<<<<<< HEAD
                         const hardTimeout = setTimeout(() => {{
                             setInput("geo_err", "Timeout");
                         }}, 15000);
@@ -1621,6 +2195,14 @@ def render_nearest_centers():
                             }},
                             (error) => {{
                                 clearTimeout(hardTimeout);
+=======
+                        nav.geolocation.getCurrentPosition(
+                            (position) => {{
+                                const okLat = setInput("geo_lat", position.coords.latitude.toString());
+                                const okLng = setInput("geo_lng", position.coords.longitude.toString());
+                            }},
+                            (error) => {{
+>>>>>>> 75b3921 (modification is done)
                                 let reason = "Unknown error";
                                 if (error.code === 1) reason = "Permission denied";
                                 if (error.code === 2) reason = "Location unavailable";
@@ -1667,7 +2249,7 @@ def render_nearest_centers():
             st.session_state.user_lng = float(lng_val)
             st.session_state.geo_state = "granted"
             st.session_state.location_detected = True
-            st.session_state.location_source = "gps"
+            st.session_state.location_source = "GPS Coordinates"
             st.rerun()
         except ValueError:
             pass
@@ -1697,11 +2279,15 @@ def render_nearest_centers():
             st.session_state.location_detected = True
             st.session_state.location_source = f"{selected_city}, {selected_state}"
             st.rerun()
-    elif st.session_state.geo_state != "granted":
+    elif st.session_state.geo_state != "granted" and st.session_state.geo_state != "fallback_search":
         st.write("")
-        if st.session_state.geo_state != "requesting":
-            st.markdown(f"<p style='color:#ef4444; font-weight:600;'>{st.session_state.geo_state if st.session_state.geo_state != 'manual' else 'Location undetected.'}</p>", unsafe_allow_html=True)
+        if st.session_state.geo_state != "requesting" and st.session_state.geo_state != "pending_input":
+            if "denied" in str(st.session_state.geo_state).lower() or "permission" in str(st.session_state.geo_state).lower():
+                st.warning("⚠️ Location permission was denied. Please enter your location in the search box above, or select manually.")
+            else:
+                st.markdown(f"<p style='color:#ef4444; font-weight:600;'>{st.session_state.geo_state if st.session_state.geo_state != 'manual' else 'Location undetected.'}</p>", unsafe_allow_html=True)
             col_retry, col_manual = st.columns([1, 1])
+<<<<<<< HEAD
             if not st.session_state.location_retry_failed:
                 with col_retry:
                     if st.button("Retry Location", use_container_width=True):
@@ -1719,11 +2305,34 @@ def render_nearest_centers():
                 st.session_state.manual_location_mode = True
                 st.session_state.geo_state = "manual"
                 st.rerun()
+=======
+            with col_retry:
+                if st.button("Retry Location", use_container_width=True, key="page_retry_btn"):
+                    st.session_state.geo_state = "requesting"
+                    st.rerun()
+            with col_manual:
+                if st.button("Choose Location Manually", use_container_width=True, key="page_choose_man_btn"):
+                    st.session_state.manual_location_mode = True
+                    st.session_state.geo_state = "manual"
+                    st.rerun()
+>>>>>>> 75b3921 (modification is done)
 
-    if st.session_state.geo_state == "requesting" and not st.session_state.manual_location_mode:
+    if (st.session_state.geo_state == "requesting" or st.session_state.geo_state == "pending_input") and not st.session_state.manual_location_mode:
         col_back, _ = st.columns([1.5, 2.5])
         with col_back:
-            if st.button(t("btn_back_details"), type="secondary", use_container_width=True):
+            if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="page_back_btn"):
+                st.session_state.step = 5
+                st.rerun()
+        return
+
+    # Handle direct database fallback query rendering
+    if st.session_state.geo_state == "fallback_search":
+        # Output a clear error message as geocoding failed
+        st.error("❌ Invalid location: We could not resolve coordinates for this address. Please try a different address (e.g. city or state).")
+        st.write("---")
+        col_back, _ = st.columns([1.5, 2.5])
+        with col_back:
+            if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_fallback_centers"):
                 st.session_state.step = 5
                 st.rerun()
         return
@@ -1746,6 +2355,7 @@ def render_nearest_centers():
     district = addr.get("state_district", addr.get("county", ""))
     state = addr.get("state", "")
     
+<<<<<<< HEAD
     parts = []
     if area: parts.append(area)
     if city: parts.append(city)
@@ -1784,12 +2394,81 @@ def render_nearest_centers():
         st.write("")
         st.warning(f"No {rec_type} found nearby.")
         col_back, _ = st.columns([1, 1])
+=======
+    # Retrieve the custom query entered by the user
+    search_query_val = st.session_state.get("page_search_query", "e-Sevai center")
+    if not search_query_val.strip():
+        search_query_val = "e-Sevai center"
+        
+    try:
+        api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+        if not api_key:
+            st.error("❌ Google Maps API Key is missing from the environment. Please check your .env configuration.")
+            nearby_centers = []
+        else:
+            radius_meters = float(radius_km) * 1000.0
+            nearby_centers = fetch_places_new(user_lat, user_lng, search_query_val, api_key, radius_meters=radius_meters)
+    except Exception as e:
+        logger.exception(f"Error calling fetch_places_new: {str(e)}")
+        st.error(f"⚠️ Error loading nearby application centers: {str(e)}")
+        col_back, _ = st.columns([1.5, 2.5])
+        with col_back:
+            if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_err_centers"):
+                st.session_state.step = 5
+                st.rerun()
+        return
+
+    if not nearby_centers:
+        st.write("")
+        st.warning(f"⚠️ No '{search_query_val}' centers were found within {radius_km} km of this location. Try increasing the search radius or changing the search query.")
+        col_back, _ = st.columns([1.5, 2.5])
+>>>>>>> 75b3921 (modification is done)
         with col_back:
             if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_no_centers"):
                 st.session_state.step = 5
                 st.rerun()
         return
+
+    rec_type = get_recommended_center_type(scheme, st.session_state.profile.get("State", "Other"))
+    st.write("")
+    st.markdown(f"<div class='premium-card' style='background: #f0fdf4; border: 1px solid #99f6e4; padding: 1rem; margin-bottom: 1.5rem;'><strong>💡 Recommended Service Point:</strong> <span style='color:#0d9488; font-weight:700;'>{rec_type}</span></div>", unsafe_allow_html=True)
+    
+    import urllib.parse
+    for idx, c in enumerate(nearby_centers):
+        if idx == 0:
+            # Highlight nearest center
+            bg_style = "background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 2px solid #059669; box-shadow: 0 10px 15px -3px rgba(5, 150, 105, 0.1);"
+            badge_html = "<span style='color:#059669; font-weight:700; font-size:0.9rem; background:#d1fae5; padding:4px 8px; border-radius:8px; display:inline-block; margin-bottom: 0.5rem;'>⭐ Nearest Center</span>"
+            st.markdown(f"<h3 style='color:#0f172a; font-weight:800; margin-bottom:1rem;'>🏢 Nearest Application Center</h3>", unsafe_allow_html=True)
+        else:
+            if idx == 1:
+                st.markdown(f"<h3 style='color:#1e293b; font-weight:800; margin-top:2rem; margin-bottom:1rem;'>📍 Other Nearby Centers (within {radius_km} km)</h3>", unsafe_allow_html=True)
+            bg_style = "background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);"
+            badge_html = ""
+            
+        st.markdown(f"""
+        <div class="premium-card" style="{bg_style} padding: 1.25rem; margin-bottom: 1rem; border-radius: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 8px;">
+                <div>
+                    <h4 style="margin: 0 0 0.25rem 0; font-size: 1.15rem; color: #0f172a; font-weight: 700;">{c['name']}</h4>
+                    {badge_html}
+                </div>
+                <div style="text-align: right;">
+                    <span style="font-weight: 700; color: #0d9488; font-size: 0.95rem; background: #e6f4ea; padding: 6px 12px; border-radius: 8px; display: inline-block;">Distance: {c['distance']:.2f} km</span>
+                </div>
+            </div>
+            <div style="color: #475569; font-size: 0.95rem; margin-top: 8px; line-height: 1.5;">
+                <b>Address:</b> {c['address']}<br>
+                <b>Latitude:</b> {c['lat']}<br>
+                <b>Longitude:</b> {c['lng']}<br>
+                <b>District:</b> {c['district']}<br>
+                <b>State:</b> {c['state']}<br>
+                <b>Available Services:</b> <span style="color: #0f766e;">{c['services']}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
+<<<<<<< HEAD
     nearest = nearby_centers[0]
     dist_val = nearest['distance']
     
@@ -1880,17 +2559,33 @@ def render_nearest_centers():
     """, unsafe_allow_html=True)
     
     col_back, col_dir = st.columns([1, 1])
+=======
+        query_str = urllib.parse.quote(f"{c['name']}, {c['address']}")
+        st.link_button("Open in Google Maps", f"https://www.google.com/maps/search/?api=1&query={query_str}", use_container_width=True, key=f"btn_map_{idx}")
+        st.write("")
+
+    st.write("---")
+    col_back, _ = st.columns([1.5, 2.5])
+>>>>>>> 75b3921 (modification is done)
     with col_back:
-        if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_nearest"):
+        if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_final_centers"):
             st.session_state.step = 5
             st.rerun()
+<<<<<<< HEAD
     with col_dir:
         st.link_button("🗺️ Navigate", f"https://www.google.com/maps/dir/?api=1&destination={c['lat']},{c['lng']}", use_container_width=True)
+=======
+>>>>>>> 75b3921 (modification is done)
     st.write("")
 
 def main():
     setup_page()
     init_session()
+    import time
+    if st.session_state.get("search_rate_limited_until", 0.0) <= time.time():
+        st.session_state.search_rate_limited = False
+    if st.session_state.get("ai_rate_limited_until", 0.0) <= time.time():
+        st.session_state.ai_rate_limited = False
     if st.session_state.step == 1:
         render_home()
     elif st.session_state.step == 2:

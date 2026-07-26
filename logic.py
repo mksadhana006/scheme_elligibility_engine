@@ -221,7 +221,7 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append(f"You are from {profile['state'].title()}")
             else:
                 why_not_matched.append(f"Requires residence in: {', '.join([s.capitalize() for s in scheme_state])}")
-                # State mismatch is a soft penalty — many schemes have expanded coverage
+                has_hard_block = True  # Mismatch is a hard block
         else:
             missing_fields.append("state")
 
@@ -252,7 +252,7 @@ def calculate_rule_score(profile, scheme):
                 why_matched.append("Your income satisfies eligibility")
             else:
                 why_not_matched.append(f"Income exceeds the maximum limit of ₹{max_income:,.0f}")
-                # Income over limit is NOT always a hard block — some schemes have flexibility
+                has_hard_block = True  # Mismatch is a hard block
         else:
             missing_fields.append("income")
 
@@ -274,7 +274,7 @@ def calculate_rule_score(profile, scheme):
                     why_matched.append(f"You are a {profile['occupation']}")
             else:
                 why_not_matched.append(f"Occupation must be one of: {', '.join(scheme_occupation).capitalize()}")
-                # Occupation mismatch is a soft penalty
+                has_hard_block = True  # Mismatch is a hard block
         else:
             missing_fields.append("occupation")
 
@@ -307,11 +307,7 @@ def fuse_scores(rule_score, relevance_score, semantic_score, llm_score, priority
     toward semantic and rules, which is the desired behavior.
     """
     if has_hard_block:
-        # Hard blocks still significantly reduce the score, but don't zero it out.
-        # This allows hard-blocked schemes to appear as "Low Match" with explanations
-        # instead of being completely hidden.
-        penalty_score = min(rule_score, 25)
-        return penalty_score, "Low Match"
+        return 0, "Not Eligible"
 
     w_semantic = 0.35
     w_rule = 0.30
@@ -411,7 +407,8 @@ def score_scheme(profile, scheme, semantic_score=50, llm_score=50, llm_explanati
         "benefit_summary": scheme.get("benefit_summary", ""),
         "application_steps": scheme.get("application_steps", []),
         "category": scheme.get("category", ""),
-        "xai_breakdown": xai_breakdown
+        "xai_breakdown": xai_breakdown,
+        "has_hard_block": has_hard_block
     }
 
 
@@ -458,110 +455,257 @@ def explain_match(scored_scheme):
     for k, v in scored_scheme.get("xai_breakdown", {}).items():
         explanation += f"- {k.replace('_', ' ').capitalize()}: {v}\n"
         
-    return explanation.strip()
-
-
 def get_top_matches(user_profile, schemes_data, top_n=15, user_text="", score_threshold=25):
     """
-    Get the top matching schemes using the full AI pipeline.
-    
-    Pipeline:
-    1. Semantic Retrieval (FAISS) — retrieve all schemes ranked by semantic similarity.
-    2. Rule Validation — score each retrieved scheme against hard constraints.
-    3. LLM Re-Ranking (Gemini) — contextually re-rank candidates.
-    4. Score Fusion — combine all signals.
-    5. Return all schemes above the score threshold, sorted by final score.
+    Get the top matching schemes using Google Gemini API to analyze eligibility contextually.
     
     Args:
-        user_profile: Dict with user's profile fields (may not be normalized yet).
-        schemes_data: List of scheme dicts from schemes.json.
+        user_profile: Dict with user's profile fields.
+        schemes_data: List of scheme dicts from schemes.json or search.
         top_n: Maximum number of results to return.
-        user_text: Raw text the user typed/spoke (used for semantic search).
-        score_threshold: Minimum final score to include in results (default: 25%).
+        user_text: Raw text the user typed/spoke.
+        score_threshold: Minimum final score to include in results.
         
     Returns:
         List of scored scheme dicts, sorted by match_score descending.
     """
+    import json
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        from scheme_elligibility_engine.api_utils import generate_content_with_cascade
+    except ImportError:
+        from api_utils import generate_content_with_cascade
+
+    # 1. Clean and normalize profile
     normalized_profile = normalize_profile(user_profile)
     
-    # --- Stage 1: Semantic Retrieval ---
-    semantic_scores = {}
-    try:
-        from embeddings import semantic_search
-        
-        semantic_results = semantic_search(
-            normalized_profile,
-            schemes_data,
-            user_text=user_text,
-            top_k=len(schemes_data)  # Retrieve all schemes with scores
-        )
-        
-        # Map scheme names to semantic scores
-        for result in semantic_results:
-            scheme_name = result["scheme"].get("scheme_name", "")
-            semantic_scores[scheme_name] = result["semantic_score"]
-            
-        logger.info(f"Semantic search returned scores for {len(semantic_scores)} schemes.")
-        
-    except ImportError:
-        logger.warning("embeddings module not available. Using keyword relevance only.")
-    except Exception as e:
-        logger.warning(f"Semantic search failed: {e}. Falling back to keyword relevance.")
+    # [1] User profile received
+    logger.info(f"[1] User profile received: {normalized_profile} | Context: {user_text}")
+    print(f"[1] User profile received: {normalized_profile} | Context: {user_text}")
+    
+    # 2. Preliminary optimization / filtering if too many schemes to stay scalable
+    candidates = schemes_data
+    if len(candidates) > 15:
+        logger.info(f"[DEBUG] Pre-filtering candidate schemes from {len(candidates)} to top 15 using semantic search.")
+        print(f"[DEBUG] Pre-filtering candidate schemes from {len(candidates)} to top 15 using semantic search.")
+        try:
+            try:
+                from scheme_elligibility_engine.embeddings import semantic_search
+            except ImportError:
+                from embeddings import semantic_search
+                
+            semantic_results = semantic_search(
+                normalized_profile,
+                schemes_data,
+                user_text=user_text,
+                top_k=15
+            )
+            candidates = [res["scheme"] for res in semantic_results]
+        except Exception as e:
+            logger.warning(f"[WARNING] Semantic pre-filtering failed: {e}. Falling back to first 15 candidate schemes.")
+            print(f"[WARNING] Semantic pre-filtering failed: {e}. Falling back to first 15 candidate schemes.")
+            candidates = schemes_data[:15]
 
-    # --- Stage 2 & 3: Prepare candidates for LLM re-ranking ---
-    # Build candidates list with semantic scores attached
-    candidates = []
-    for scheme in schemes_data:
-        scheme_name = scheme.get("scheme_name", "")
-        sem_score = semantic_scores.get(scheme_name, 50)  # Default 50 if not available
-        candidates.append({
-            "scheme": scheme,
-            "semantic_score": sem_score
+    # Log/Prep Scheme info
+    candidate_names = [s.get("scheme_name", "Unknown") for s in candidates]
+
+    # 3. Formulate User Profile details
+    profile_items = []
+    for k, v in normalized_profile.items():
+        if v is not None and str(v).strip() != "":
+            label = k.replace("_", " ").title()
+            profile_items.append(f"{label}: {v}")
+    if user_text:
+        profile_items.append(f"Additional Profile Context (such as caste/category, land ownership, disability, student status, etc.): {user_text}")
+    user_profile_str = "\n".join(profile_items)
+
+    # 4. Formulate the scheme details for Gemini matching
+    schemes_for_gemini = []
+    for scheme in candidates:
+        schemes_for_gemini.append({
+            "scheme_name": scheme.get("scheme_name", ""),
+            "category": scheme.get("category", ""),
+            "state": scheme.get("state", []),
+            "eligibility_criteria": scheme.get("eligibility_criteria", ""),
+            "income_limit": scheme.get("income_limit"),
+            "age_limit": scheme.get("age_limit"),
+            "gender": scheme.get("gender", []),
+            "marital_status": scheme.get("marital_status", []),
+            "occupation": scheme.get("occupation", [])
         })
+    schemes_data_str = json.dumps(schemes_for_gemini, indent=2)
 
-    # --- Stage 3: LLM Re-Ranking ---
-    llm_scores = {}
-    llm_explanations = {}
+    # 5. Formulate prompt for Gemini
+    prompt = f"""Evaluate the user profile against the provided government welfare schemes to identify schemes that the user actually matches and is eligible for.
+
+USER PROFILE:
+{user_profile_str}
+
+AVAILABLE SCHEMES:
+{schemes_data_str}
+
+TASK:
+Analyze the complete user profile (including demographic details like Age, Gender, State, Occupation, Income, Marital Status, and any details in the Additional Profile Context) against the eligibility criteria of each scheme.
+Identify which schemes the user is eligible for and satisfies all criteria.
+
+STRICT MATCHING RULES:
+1. You must consider all relevant profile fields and eligibility criteria.
+2. If a scheme is restricted to specific categories (e.g. only for women, students, senior citizens, farmers, or disabled persons), the user profile MUST explicitly satisfy those requirements. Do not match a scheme merely because the user's category matches if other criteria (like gender, age, income, state, land ownership, or disability status) are violated.
+3. Every returned scheme MUST correspond to an actual scheme present in the provided list of AVAILABLE SCHEMES. Do not invent/hallucinate any scheme names or details.
+4. If you are uncertain or if the user profile violates a requirement, mark it as ineligible. Only include schemes for which the user is genuinely eligible.
+
+OUTPUT FORMAT:
+Respond ONLY with a valid JSON object matching the schema below. Do not wrap the response in markdown blocks like ```json or any other text.
+
+If there are matching schemes:
+{{
+  "status": "success",
+  "matched_schemes": [
+    {{
+      "scheme_name": "Scheme Name",
+      "eligibility_status": "Eligible",
+      "match_score": 100,
+      "reason": "Why the user qualifies",
+      "matched_criteria": [
+        "..."
+      ],
+      "unmatched_criteria": [
+        "..."
+      ],
+      "official_source": "https://..."
+    }}
+  ]
+}}
+
+If there are no genuinely matching schemes:
+{{
+  "status": "no_match",
+  "matched_schemes": [],
+  "message": "No eligible schemes found for the provided profile."
+}}
+
+Ensure valid JSON structure.
+"""
+
+    # [2] Gemini API request started
+    logger.info("[2] Gemini API request started")
+    print("[2] Gemini API request started")
+
+    # 6. Call Gemini API via the cascade helper
     try:
-        from llm_reranker import rerank_schemes, is_available as llm_available
-        
-        if llm_available():
-            reranked = rerank_schemes(normalized_profile, candidates)
-            for item in reranked:
-                scheme_name = item["scheme"].get("scheme_name", "")
-                llm_scores[scheme_name] = item.get("llm_score", 50)
-                llm_explanations[scheme_name] = item.get("llm_explanation", "")
-            logger.info(f"LLM re-ranking completed for {len(llm_scores)} schemes.")
-        else:
-            logger.info("LLM re-ranking not available (no API key). Using semantic + rules only.")
-            
-    except ImportError:
-        logger.warning("llm_reranker module not available. Skipping LLM re-ranking.")
-    except Exception as e:
-        logger.warning(f"LLM re-ranking failed: {e}. Continuing without LLM scores.")
-
-    # --- Stage 4: Score each scheme with all signals ---
-    results = []
-    for scheme in schemes_data:
-        scheme_name = scheme.get("scheme_name", "")
-        
-        sem_score = semantic_scores.get(scheme_name, 50)
-        llm_score = llm_scores.get(scheme_name, 50)
-        llm_explanation = llm_explanations.get(scheme_name, "")
-        
-        score_result = score_scheme(
-            normalized_profile,
-            scheme,
-            semantic_score=sem_score,
-            llm_score=llm_score,
-            llm_explanation=llm_explanation
+        response = generate_content_with_cascade(
+            prompt,
+            generation_config={
+                "temperature": 0.1,
+                "response_mime_type": "application/json"
+            },
+            api_name="Gemini Eligibility Engine API"
         )
-        results.append(score_result)
+        response_text = response.text.strip()
+        
+        # [3] Gemini API response received
+        logger.info("[3] Gemini API response received")
+        print("[3] Gemini API response received")
+        
+        # Scrub markdown wrappers if any
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            if lines[0].startswith("```json") or lines[0].startswith("```"):
+                response_text = "\n".join(lines[1:-1])
+                
+        gemini_response = json.loads(response_text)
+    except Exception as e:
+        logger.error(f"[ERROR] Gemini API request failed: {e}")
+        print(f"[ERROR] Gemini API request failed: {e}")
+        raise RuntimeError(f"Gemini API request failed: {e}")
 
-    # --- Stage 5: Rank and filter ---
-    ranked = rank_schemes(results)
+    status = gemini_response.get("status", "success")
+    gemini_results = gemini_response.get("matched_schemes", [])
+
+    # [4] Number of schemes returned by Gemini
+    logger.info(f"[4] Number of schemes returned by Gemini: {len(gemini_results)}")
+    print(f"[4] Number of schemes returned by Gemini: {len(gemini_results)}")
+
+    # [5] Gemini returned zero matches OR matching schemes
+    if status == "no_match" or not gemini_results:
+        logger.info("[5] Gemini returned zero matches.")
+        print("[5] Gemini returned zero matches.")
+        # [6] Whether any local database fallback was attempted
+        logger.info("[6] Whether any local database fallback was attempted: No fallback was attempted.")
+        print("[6] Whether any local database fallback was attempted: No fallback was attempted.")
+        return []
+
+    matched_names = [s.get("scheme_name", "Unknown") for s in gemini_results]
+    logger.info(f"[5] Gemini returned matching schemes: {matched_names}")
+    print(f"[5] Gemini returned matching schemes: {matched_names}")
+
+    # [6] Whether any local database fallback was attempted
+    logger.info("[6] Whether any local database fallback was attempted: No fallback was attempted.")
+    print("[6] Whether any local database fallback was attempted: No fallback was attempted.")
+
+    # 7. Post-process matched results to match UI structure and merge original details
+    schemes_lookup = {s.get("scheme_name", "").lower().strip(): s for s in schemes_data}
     
-    # Filter by score threshold and cap at top_n
-    filtered = [r for r in ranked if r["match_score"] >= score_threshold]
-    
-    return filtered[:top_n]
+    results = []
+    for g_res in gemini_results:
+        # Prevent hallucinated schemes or incorrect status
+        if g_res.get("eligibility_status") != "Eligible":
+            continue
+            
+        g_name = g_res.get("scheme_name", "")
+        # Find closest scheme from schemes_data to avoid hallucinations
+        orig_scheme = None
+        g_name_clean = g_name.lower().strip()
+        if g_name_clean in schemes_lookup:
+            orig_scheme = schemes_lookup[g_name_clean]
+        else:
+            # Fallback fuzzy matching (substring or key in name)
+            for k, v in schemes_lookup.items():
+                if k in g_name_clean or g_name_clean in k:
+                    orig_scheme = v
+                    break
+                    
+        if not orig_scheme:
+            logger.warning(f"[WARNING] Gemini returned a scheme name not found in candidates: '{g_name}'. Skipping to prevent hallucination.")
+            print(f"[WARNING] Gemini returned a scheme name not found in candidates: '{g_name}'. Skipping to prevent hallucination.")
+            continue
+            
+        # Combine reasons and matched criteria for positive/negative displays
+        matched_criteria = g_res.get("matched_criteria", [])
+        unmatched_criteria = g_res.get("unmatched_criteria", [])
+        reason = g_res.get("reason", "")
+        
+        why_matched = []
+        if reason:
+            why_matched.append(f"AI Eligibility Check: {reason}")
+        why_matched.extend(matched_criteria)
+        
+        why_not_matched = list(unmatched_criteria)
+        
+        score = g_res.get("match_score", 100)
+        official_source = g_res.get("official_source") or orig_scheme.get("official_apply_link", "")
+        
+        # Build UI-compatible structured item
+        results.append({
+            "scheme_name": orig_scheme.get("scheme_name"),
+            "match_status": "Full Match",
+            "match_score": score,
+            "why_matched": why_matched,
+            "why_not_matched": why_not_matched,
+            "missing_fields": [],
+            "required_documents": orig_scheme.get("required_documents", []),
+            "official_apply_link": official_source,
+            "benefit_summary": orig_scheme.get("benefit_summary", ""),
+            "application_steps": orig_scheme.get("application_steps", []),
+            "category": orig_scheme.get("category", ""),
+            "has_hard_block": False,
+            "xai_breakdown": {
+                "ai_eligibility_matching": "Decision verified contextually by Gemini API"
+            }
+        })
+        
+    # Rank results by score descending
+    results = sorted(results, key=lambda x: x['match_score'], reverse=True)
+    return results[:top_n]
