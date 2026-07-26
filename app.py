@@ -7,12 +7,9 @@ import streamlit.components.v1 as components
 import time
 import re
 import requests
-<<<<<<< HEAD
 import osm_api
-=======
 import logging
 logger = logging.getLogger(__name__)
->>>>>>> 75b3921 (modification is done)
 from logic import get_top_matches, normalize_profile
 from preprocess import build_profile
 from centers_db import fetch_nearby_places_local, geocode_address_free, fallback_text_search, haversine_distance, fetch_places_new
@@ -2051,7 +2048,6 @@ def render_nearest_centers():
 
     # Reset manual mode if we already have GPS granted
     if "geo_state" not in st.session_state:
-<<<<<<< HEAD
         st.session_state.geo_state = "requesting"
     if st.session_state.geo_state == "granted" and st.session_state.get("location_source") == "gps":
         st.session_state.manual_location_mode = False
@@ -2060,9 +2056,6 @@ def render_nearest_centers():
 
     if "location_retry_failed" not in st.session_state:
         st.session_state.location_retry_failed = False
-=======
-        st.session_state.geo_state = "pending_input"
->>>>>>> 75b3921 (modification is done)
         
     st.markdown(f"<h2 style='color:#0f172a; font-weight:800; margin-bottom:0.5rem;'>{t('find_center_title')}</h2>", unsafe_allow_html=True)
     if scheme:
@@ -2138,12 +2131,6 @@ def render_nearest_centers():
         <html>
         <head>
             <style>
-<<<<<<< HEAD
-                body {{ font-family: sans-serif; background: transparent; margin: 0; padding: 0; }}
-            </style>
-        </head>
-        <body>
-=======
                 body {{ font-family: sans-serif; background: transparent; margin: 0; padding: 10px; }}
                 #debug-box {{ border: 1px solid #ccc; padding: 10px; border-radius: 8px; font-size: 13px; background: #f8fafc; display: none; }}
             </style>
@@ -2153,7 +2140,6 @@ def render_nearest_centers():
                 <span id="d-res">Waiting...</span>
             </div>
             
->>>>>>> 75b3921 (modification is done)
             <script>
                 function setInput(placeholder, value) {{
                     try {{
@@ -2168,10 +2154,7 @@ def render_nearest_centers():
                             }}
                         }}
                     }} catch(e) {{
-<<<<<<< HEAD
-=======
                         console.error(e);
->>>>>>> 75b3921 (modification is done)
                     }}
                     return false;
                 }}
@@ -2179,7 +2162,6 @@ def render_nearest_centers():
                 window.onload = function() {{
                     const nav = window.parent.navigator.geolocation ? window.parent.navigator : navigator;
                     if (nav && nav.geolocation) {{
-<<<<<<< HEAD
                         const hardTimeout = setTimeout(() => {{
                             setInput("geo_err", "Timeout");
                         }}, 15000);
@@ -2195,14 +2177,6 @@ def render_nearest_centers():
                             }},
                             (error) => {{
                                 clearTimeout(hardTimeout);
-=======
-                        nav.geolocation.getCurrentPosition(
-                            (position) => {{
-                                const okLat = setInput("geo_lat", position.coords.latitude.toString());
-                                const okLng = setInput("geo_lng", position.coords.longitude.toString());
-                            }},
-                            (error) => {{
->>>>>>> 75b3921 (modification is done)
                                 let reason = "Unknown error";
                                 if (error.code === 1) reason = "Permission denied";
                                 if (error.code === 2) reason = "Location unavailable";
@@ -2287,25 +2261,6 @@ def render_nearest_centers():
             else:
                 st.markdown(f"<p style='color:#ef4444; font-weight:600;'>{st.session_state.geo_state if st.session_state.geo_state != 'manual' else 'Location undetected.'}</p>", unsafe_allow_html=True)
             col_retry, col_manual = st.columns([1, 1])
-<<<<<<< HEAD
-            if not st.session_state.location_retry_failed:
-                with col_retry:
-                    if st.button("Retry Location", use_container_width=True):
-                        st.session_state.location_retry_failed = True
-                        st.session_state.geo_state = "requesting"
-                        st.rerun()
-            else:
-                with col_manual:
-                    if st.button("Choose Location Manually", use_container_width=True):
-                        st.session_state.manual_location_mode = True
-                        st.session_state.geo_state = "manual"
-                        st.rerun()
-        else:
-            if st.button("Choose Location Manually"):
-                st.session_state.manual_location_mode = True
-                st.session_state.geo_state = "manual"
-                st.rerun()
-=======
             with col_retry:
                 if st.button("Retry Location", use_container_width=True, key="page_retry_btn"):
                     st.session_state.geo_state = "requesting"
@@ -2315,7 +2270,6 @@ def render_nearest_centers():
                     st.session_state.manual_location_mode = True
                     st.session_state.geo_state = "manual"
                     st.rerun()
->>>>>>> 75b3921 (modification is done)
 
     if (st.session_state.geo_state == "requesting" or st.session_state.geo_state == "pending_input") and not st.session_state.manual_location_mode:
         col_back, _ = st.columns([1.5, 2.5])
@@ -2355,46 +2309,6 @@ def render_nearest_centers():
     district = addr.get("state_district", addr.get("county", ""))
     state = addr.get("state", "")
     
-<<<<<<< HEAD
-    parts = []
-    if area: parts.append(area)
-    if city: parts.append(city)
-    
-    parts2 = []
-    if district: parts2.append(district)
-    if state: parts2.append(state)
-    
-    if parts and parts2:
-        loc_display = f"{', '.join(parts)}<br>{', '.join(parts2)}"
-    elif parts or parts2:
-        loc_display = f"{', '.join(parts) if parts else ', '.join(parts2)}"
-    else:
-        # Fallback to formatted full address if specific parts are missing
-        formatted = osm_api.get_formatted_address_from_coords(user_lat, user_lng)
-        loc_display = formatted.replace(", ", "<br>", 1) if ", " in formatted else formatted
-
-    if loc_source != "gps" and loc_source != "GPS":
-        loc_display = f"{loc_source}"
-
-    user_state = addr.get("state", "Other")
-    rec_type = get_recommended_center_type(scheme, user_state)
-
-    # Fetch nearest centres via Overpass API with fallback
-    nearby_centers = osm_api.find_nearby_centres(user_lat, user_lng, center_type=rec_type)
-    
-    if not nearby_centers:
-        st.info("Using local dataset for nearby application centres as online search is currently unavailable.")
-        for center in APPLICATION_CENTERS:
-            center["distance"] = osm_api.haversine_distance(user_lat, user_lng, center["lat"], center["lng"])
-        sorted_centers = sorted(APPLICATION_CENTERS, key=lambda x: x["distance"])
-        MAX_DISTANCE_KM = 500.0
-        nearby_centers = [c for c in sorted_centers if c["distance"] <= MAX_DISTANCE_KM]
-    
-    if not nearby_centers:
-        st.write("")
-        st.warning(f"No {rec_type} found nearby.")
-        col_back, _ = st.columns([1, 1])
-=======
     # Retrieve the custom query entered by the user
     search_query_val = st.session_state.get("page_search_query", "e-Sevai center")
     if not search_query_val.strip():
@@ -2422,7 +2336,6 @@ def render_nearest_centers():
         st.write("")
         st.warning(f"⚠️ No '{search_query_val}' centers were found within {radius_km} km of this location. Try increasing the search radius or changing the search query.")
         col_back, _ = st.columns([1.5, 2.5])
->>>>>>> 75b3921 (modification is done)
         with col_back:
             if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_no_centers"):
                 st.session_state.step = 5
@@ -2468,114 +2381,16 @@ def render_nearest_centers():
         </div>
         """, unsafe_allow_html=True)
         
-<<<<<<< HEAD
-    nearest = nearby_centers[0]
-    dist_val = nearest['distance']
-    
-    st.markdown(f"""
-    <div style="position: fixed; top: 60px; right: 20px; background: white; padding: 16px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; z-index: 999999; min-width: 240px; font-family: sans-serif;">
-        <div style="margin-bottom: 12px;">
-            <div style="color: #0f172a; font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">📍 Current Location</div>
-            <div style="color: #475569; font-size: 0.85rem; margin-bottom: 4px;">{loc_display}</div>
-            <div style="color: #059669; font-size: 0.75rem; font-weight: 600;">✓ Location Detected</div>
-        </div>
-        <hr style="border: 0; height: 1px; background: #e2e8f0; margin: 8px 0;">
-        <div style="margin-bottom: 12px;">
-            <div style="color: #0f172a; font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">🏢 Nearest Center</div>
-            <div style="color: #475569; font-size: 0.85rem;">{nearest['type']}</div>
-        </div>
-        <div style="background: #f8fafc; padding: 8px; border-radius: 8px; border: 1px solid #f1f5f9;">
-            <div style="color: #0f172a; font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 6px;">📏 Distance</div>
-            <div style="color: #0d9488; font-weight: 700; font-size: 1.1rem;">{dist_val:.1f} km</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Leaflet Map
-    map_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-        <style>
-            #map {{ height: 400px; width: 100%; border-radius: 12px; margin-bottom: 1rem; border: 1.5px solid #0d9488; }}
-        </style>
-    </head>
-    <body>
-        <div id="map"></div>
-        <script>
-            var userLat = {user_lat};
-            var userLng = {user_lng};
-            var centerLat = {nearest['lat']};
-            var centerLng = {nearest['lng']};
-
-            var map = L.map('map');
-            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                attribution: '&copy; OpenStreetMap contributors'
-            }}).addTo(map);
-
-            var userIcon = L.divIcon({{className: 'custom-icon', html: '<div style="font-size:24px;">🔵</div>', iconSize: [24,24], iconAnchor: [12,12]}});
-            var centerIcon = L.divIcon({{className: 'custom-icon', html: '<div style="font-size:24px;">🟢</div>', iconSize: [24,24], iconAnchor: [12,12]}});
-
-            L.marker([userLat, userLng], {{icon: userIcon}}).addTo(map).bindPopup("<b>User Location</b>");
-            L.marker([centerLat, centerLng], {{icon: centerIcon}}).addTo(map).bindPopup("<b>Nearest Center:</b><br>{nearest['name']}");
-
-            var latlngs = [[userLat, userLng], [centerLat, centerLng]];
-            var polyline = L.polyline(latlngs, {{color: '#0d9488', weight: 4, dashArray: '5, 5'}}).addTo(map);
-
-            map.fitBounds(polyline.getBounds(), {{padding: [50, 50]}});
-        </script>
-    </body>
-    </html>
-    """
-    components.html(map_html, height=420)
-
-    st.write("")
-    st.markdown(f"<div class='premium-card' style='background: #f0fdf4; border: 1px solid #99f6e4; padding: 1rem; margin-bottom: 1rem;'><strong>💡 {t('recommended_type')}</strong> <span style='color:#0d9488; font-weight:700;'>{rec_type}</span></div>", unsafe_allow_html=True)
-    
-    c = nearest
-    bg_style = "background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); border: 1.5px solid #0d9488; box-shadow: 0 10px 15px -3px rgba(13, 148, 136, 0.1);"
-    
-    st.markdown(f"""
-    <div class="premium-card" style="{bg_style} padding: 1.25rem; margin-bottom: 1rem; border-radius: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 8px;">
-            <div>
-                <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem; color: #0f172a; font-weight: 700;">🏢 Nearest Application Center</h4>
-                <span style="color:#0d9488; font-weight:600; font-size:0.9rem; display: block; margin-bottom: 0.5rem;">{c['type']}</span>
-            </div>
-            <div style="text-align: right;">
-                <span style="font-weight: 700; color: #1e293b; font-size: 0.95rem; background: #f1f5f9; padding: 6px 12px; border-radius: 8px; display: inline-block;">📏 Distance: {dist_val:.1f} km</span>
-            </div>
-        </div>
-        <div style="color: #475569; font-size: 0.9rem; margin: 0.5rem 0 0.5rem 0; line-height: 1.4;">
-            <b>{c['name']}</b><br>
-            <b>Address:</b><br>{c.get('address', 'Address not available')}
-        </div>
-        <div style="color: #64748b; font-size: 0.85rem; margin: 0.25rem 0 1rem 0;">
-            📞 <b>Phone:</b> {c.get('phone', 'N/A')}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col_back, col_dir = st.columns([1, 1])
-=======
         query_str = urllib.parse.quote(f"{c['name']}, {c['address']}")
         st.link_button("Open in Google Maps", f"https://www.google.com/maps/search/?api=1&query={query_str}", use_container_width=True, key=f"btn_map_{idx}")
         st.write("")
 
     st.write("---")
     col_back, _ = st.columns([1.5, 2.5])
->>>>>>> 75b3921 (modification is done)
     with col_back:
         if st.button(t("btn_back_details"), type="secondary", use_container_width=True, key="back_final_centers"):
             st.session_state.step = 5
             st.rerun()
-<<<<<<< HEAD
-    with col_dir:
-        st.link_button("🗺️ Navigate", f"https://www.google.com/maps/dir/?api=1&destination={c['lat']},{c['lng']}", use_container_width=True)
-=======
->>>>>>> 75b3921 (modification is done)
     st.write("")
 
 def main():
